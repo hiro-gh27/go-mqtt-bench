@@ -44,20 +44,16 @@ func randomString(n int) string {
 }
 
 func randomConnect(opts *MQTT.ClientOptions, i int, ch chan MQTT.Client) MQTT.Client {
-	/*waitTime := */ //randomInterval()
+	//randomInterval()
 	clientID := "clientID: "
 	clientID += strconv.FormatInt(int64(i), 10)
-	//clientID += " / waitTime= "
-	//clientID += strconv.FormatInt(int64(waitTime), 10)
 	opts.SetClientID(clientID)
 
-	//create and start a client using the above ClientOptions
 	c := MQTT.NewClient(opts)
 	if token := c.Connect(); token.Wait() && token.Error() != nil {
 		panic(token.Error())
 	}
 	//periodPublish(c)
-
 	return c
 }
 
@@ -85,8 +81,6 @@ func main() {
 	for index := 0; index < clientsNum; index++ {
 
 	}
-
-	//time.Sleep(10000 * time.Millisecond)
 
 	for _, c := range clients {
 		periodPublish(c)

@@ -1,14 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strconv"
-
-	"fmt"
-
-	"time"
-
 	"sync"
+	"time"
 
 	MQTT "github.com/eclipse/paho.mqtt.golang"
 )
@@ -39,6 +36,18 @@ func execute(opts execOptions) {
 	time.Sleep(3)
 }
 
+func asyncDisconnect(clients []MQTT.Client) {
+	wg := &sync.WaitGroup{}
+	for _, c := range clients {
+		wg.Add(1)
+		go func(client MQTT.Client) {
+			client.Disconnect(10)
+			wg.Done()
+		}(c)
+	}
+	wg.Wait()
+}
+
 func connect(id int, execOpts execOptions) MQTT.Client {
 	prosessID := strconv.FormatInt(int64(os.Getpid()), 16)
 	clientID := fmt.Sprintf("go-mqtt-bench%s-%d", prosessID, id)
@@ -56,23 +65,18 @@ func connect(id int, execOpts execOptions) MQTT.Client {
 	return client
 }
 
-func asyncDisconnect(clients []MQTT.Client) {
-	wg := &sync.WaitGroup{}
-	for _, c := range clients {
-		client := c
-		wg.Add(1)
-		go func() {
-			client.Disconnect(10)
-			wg.Done()
-		}()
-	}
-	wg.Wait()
+func publishRequestAll(clients []MQTT.Client, opts execOptions, param ...string) int {
+	//message := param[0]
+
+	//wg := &sync.WaitGroup{}
+	totalCount := 0
+	return totalCount
 }
 
 func main() {
 	execOpts := execOptions{}
 	execOpts.Broker = "tcp://localhost:1883"
-	execOpts.ClientNum = 1000
+	execOpts.ClientNum = 10
 	execute(execOpts)
 }
 

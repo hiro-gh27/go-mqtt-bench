@@ -1,15 +1,82 @@
 package main
 
 import (
+	"os"
+	"strconv"
+
 	"fmt"
-	"math/rand"
+
 	"time"
 
-	"strconv"
+	"sync"
 
 	MQTT "github.com/eclipse/paho.mqtt.golang"
 )
 
+type execOptions struct {
+	Broker   string // Broker URI
+	Qos      byte   // QoS(0|1|2)
+	Retain   bool   // Retain
+	Topic    string // Topicのルート
+	Username string // ユーザID
+	Password string // パスワード
+	//CertConfig        CertConfig // 認証定義
+	ClientNum         int  // クライアントの同時実行数
+	Count             int  // 1クライアント当たりのメッセージ数
+	MessageSize       int  // 1メッセージのサイズ(byte)
+	UseDefaultHandler bool // Subscriber個別ではなく、デフォルトのMessageHandlerを利用するかどうか
+	PreTime           int  // 実行前の待機時間(ms)
+	IntervalTime      int  // メッセージ毎の実行間隔時間(ms)
+}
+
+func execute(opts execOptions) {
+	var clients []MQTT.Client
+	for index := 0; index < opts.ClientNum; index++ {
+		client := connect(index, opts)
+		clients = append(clients, client)
+	}
+	asyncDisconnect(clients)
+	time.Sleep(3)
+}
+
+func connect(id int, execOpts execOptions) MQTT.Client {
+	prosessID := strconv.FormatInt(int64(os.Getpid()), 16)
+	clientID := fmt.Sprintf("go-mqtt-bench%s-%d", prosessID, id)
+
+	opts := MQTT.NewClientOptions()
+	opts.AddBroker(execOpts.Broker)
+	opts.SetClientID(clientID)
+	opts.SetCleanSession(false)
+
+	client := MQTT.NewClient(opts)
+	token := client.Connect()
+	if token.Wait() && token.Error() != nil {
+		panic(token.Error())
+	}
+	return client
+}
+
+func asyncDisconnect(clients []MQTT.Client) {
+	wg := &sync.WaitGroup{}
+	for _, c := range clients {
+		client := c
+		wg.Add(1)
+		go func() {
+			client.Disconnect(10)
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+}
+
+func main() {
+	execOpts := execOptions{}
+	execOpts.Broker = "tcp://localhost:1883"
+	execOpts.ClientNum = 1000
+	execute(execOpts)
+}
+
+/*
 var rs1Letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 const rs2Letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -88,7 +155,7 @@ func main() {
 		time.Sleep(300 * time.Millisecond)
 	}
 }
-
+*/
 // /usr/local/opt/mosquitto/sbin/mosquitto
 /**
 

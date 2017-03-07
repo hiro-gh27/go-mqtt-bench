@@ -20,34 +20,6 @@ var rs1Letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 const rs2Letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-func main() {
-	initSeed()
-
-	var clients []MQTT.Client
-	clientsNum := 10
-	ch := make(chan MQTT.Client)
-	opts := MQTT.NewClientOptions().AddBroker("tcp://localhost:1883")
-	opts.SetDefaultPublishHandler(f)
-	opts.SetCleanSession(false)
-	for i := 0; i < clientsNum; i++ {
-		//clientID := randomString(10)
-		c := randomConnect(opts, i, ch)
-		clients = append(clients, c)
-	}
-
-	for index := 0; index < clientsNum; index++ {
-
-	}
-
-	//time.Sleep(10000 * time.Millisecond)
-
-	for _, c := range clients {
-		periodPublish(c)
-		c.Disconnect(250)
-		time.Sleep(300 * time.Millisecond)
-	}
-}
-
 //use random
 func initSeed() {
 	rand.Seed(time.Now().UnixNano())
@@ -93,6 +65,34 @@ func randomInterval() int {
 	waitTime := rand.Intn(1000)
 	time.Sleep(time.Duration(waitTime) * time.Millisecond)
 	return waitTime
+}
+
+func main() {
+	initSeed()
+
+	var clients []MQTT.Client
+	clientsNum := 10
+	ch := make(chan MQTT.Client)
+	opts := MQTT.NewClientOptions().AddBroker("tcp://localhost:1883")
+	opts.SetDefaultPublishHandler(f)
+	opts.SetCleanSession(false)
+	for i := 0; i < clientsNum; i++ {
+		//clientID := randomString(10)
+		c := randomConnect(opts, i, ch)
+		clients = append(clients, c)
+	}
+
+	for index := 0; index < clientsNum; index++ {
+
+	}
+
+	//time.Sleep(10000 * time.Millisecond)
+
+	for _, c := range clients {
+		periodPublish(c)
+		c.Disconnect(250)
+		time.Sleep(300 * time.Millisecond)
+	}
 }
 
 // /usr/local/opt/mosquitto/sbin/mosquitto

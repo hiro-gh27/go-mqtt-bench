@@ -23,19 +23,26 @@ const rs2Letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 func main() {
 	initSeed()
 
-	//var clients [10]MQTT.Client
+	var clients []MQTT.Client
+	clientsNum := 100
+	//ch := make(chan MQTT.Client)
 	//create a ClientOptions struct setting the broker address, clientid, turn
 	//off trace output and set the default message handler
 	opts := MQTT.NewClientOptions().AddBroker("tcp://localhost:1883")
 	opts.SetDefaultPublishHandler(f)
 	opts.SetCleanSession(false)
-	for i := 0; i < 10; i++ {
+	for i := 0; i < clientsNum; i++ {
 		//clientID := randomString(10)
-		go randomConnect(opts, i)
-
+		c := randomConnect(opts, i)
+		clients = append(clients, c)
 	}
 
 	time.Sleep(10000 * time.Millisecond)
+
+	for _, c := range clients {
+		periodPublish(c)
+		c.Disconnect(250)
+	}
 
 	/**
 
@@ -73,7 +80,7 @@ func initSeed() {
 
 //cheak!! (シグナルを受け取るまで回し続けるっていうアイデア)
 func periodPublish(c MQTT.Client) {
-	for {
+	for i := 0; i < 10; i++ {
 		text := fmt.Sprintf("this is message")
 		token := c.Publish("go-mqtt/sample", 0, false, text)
 		token.Wait()
@@ -97,11 +104,11 @@ func randomString(n int) string {
 }
 
 func randomConnect(opts *MQTT.ClientOptions, i int) MQTT.Client {
-	waitTime := randomInterval()
+	/*waitTime := */ //randomInterval()
 	clientID := "clientID: "
 	clientID += strconv.FormatInt(int64(i), 10)
-	clientID += " / waitTime= "
-	clientID += strconv.FormatInt(int64(waitTime), 10)
+	//clientID += " / waitTime= "
+	//clientID += strconv.FormatInt(int64(waitTime), 10)
 	opts.SetClientID(clientID)
 
 	//create and start a client using the above ClientOptions

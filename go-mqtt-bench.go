@@ -3,8 +3,12 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"sync"
+
+	"bytes"
+
 	"time"
 
 	MQTT "github.com/eclipse/paho.mqtt.golang"
@@ -32,8 +36,15 @@ func execute(opts execOptions) {
 		client := connect(index, opts)
 		clients = append(clients, client)
 	}
+	time.Sleep(3000 * time.Millisecond)
+
+	startTime := time.Now()
+	publishRequestAll(clients, opts)
+	endTime := time.Now()
+	duration := (endTime.Sub(startTime)).Nanoseconds() / int64(1000000)
+	fmt.Println(duration)
+
 	asyncDisconnect(clients)
-	time.Sleep(3)
 }
 
 func asyncDisconnect(clients []MQTT.Client) {
@@ -55,7 +66,7 @@ func connect(id int, execOpts execOptions) MQTT.Client {
 	opts := MQTT.NewClientOptions()
 	opts.AddBroker(execOpts.Broker)
 	opts.SetClientID(clientID)
-	opts.SetCleanSession(false)
+	//opts.SetCleanSession(true)
 
 	client := MQTT.NewClient(opts)
 	token := client.Connect()
@@ -65,19 +76,52 @@ func connect(id int, execOpts execOptions) MQTT.Client {
 	return client
 }
 
-func publishRequestAll(clients []MQTT.Client, opts execOptions, param ...string) int {
-	//message := param[0]
+func createFixedSizeMassage(size int) string {
+	var buffer bytes.Buffer
+	for index := 0; index < size; index++ {
+		buffer.WriteString(strconv.Itoa(index % 10))
+	}
+	massage := buffer.String()
+	return massage
+}
 
-	//wg := &sync.WaitGroup{}
+func publishRequestAll(clients []MQTT.Client, opts execOptions) int {
+	wg := &sync.WaitGroup{}
 	totalCount := 0
+	for id := 0; id < len(clients); id++ {
+		wg.Add(1)
+		c := clients[id]
+		go func(clientID int) {
+			client := c
+			for index := 0; index < opts.Count; index++ {
+				topic := fmt.Sprintf(opts.Topic+"%d", clientID)
+				//message := createFixedSizeMassage(100)
+				token := client.Publish(topic, opts.Qos, false, fmt.Sprintf("%d", clientID))
+				//fmt.Printf("Publish : id=%d, count=%d, topic=%s\n", clientID, index, topic)
+				token.Wait()
+			}
+			//sys := fmt.Sprintf("finished ClientID = %d", clientID)
+			//fmt.Println(sys)
+			wg.Done()
+		}(id)
+	}
+	wg.Wait()
 	return totalCount
 }
 
 func main() {
+	cpus := runtime.NumCPU()
+	cpus = 4
+	println(cpus)
+	runtime.GOMAXPROCS(cpus)
 	execOpts := execOptions{}
 	execOpts.Broker = "tcp://localhost:1883"
-	execOpts.ClientNum = 10
+	execOpts.ClientNum = 1
+	execOpts.Qos = 0
+	execOpts.Count = 100000
+	execOpts.Topic = "go-mqtt/"
 	execute(execOpts)
+
 }
 
 /*

@@ -111,7 +111,6 @@ func publishRequestAll(clients []MQTT.Client, opts execOptions) int {
 
 func main() {
 	cpus := runtime.NumCPU()
-	cpus = 4
 	println(cpus)
 	runtime.GOMAXPROCS(cpus)
 	execOpts := execOptions{}

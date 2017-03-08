@@ -39,6 +39,10 @@ type execOptions struct {
 	IntervalTime      int  // メッセージ毎の実行間隔時間(ms)
 }
 
+type clientResult struct {
+	count int
+}
+
 func execute(opts execOptions) {
 	var clients []MQTT.Client
 	for index := 0; index < opts.ClientNum; index++ {
@@ -50,7 +54,8 @@ func execute(opts execOptions) {
 
 	startTime := time.Now()
 	fmt.Println("start")
-	publishRequestAll(clients, opts)
+	//publishRequestAll(clients, opts)
+	subscribeRequestAll(clients, opts)
 	endTime := time.Now()
 	duration := (endTime.Sub(startTime)).Nanoseconds() / int64(1000000)
 	fmt.Println(duration)
@@ -122,6 +127,7 @@ func publishRequestAll(clients []MQTT.Client, opts execOptions) int {
 	wg.Wait()
 	//オリジナルでは,totalCountを取得していたけれども, 独立したスレッドから共有資源へのアクセスは複雑になると思われ.
 	//しかし, そんな操作は見当たらず...うむ....
+	//subscribe同様に, ポインタをうまく活用するとtotalcontuできる模様
 	return totalCount
 }
 
@@ -146,6 +152,35 @@ func randomStr(n int) string {
 }
 
 func subscribeRequestAll(clients []MQTT.Client, opts execOptions) {
+	//wg := new(sync.WaitGroup)
+	topic := fmt.Sprintf(opts.Topic + "#")
+	var results []*clientResult
+	for id := 0; id < len(clients); id++ {
+		//wg.Add(1)
+
+		client := clients[id]
+		result := &clientResult{}
+		//init is need or not??
+		//result.count = 0
+		var handller MQTT.MessageHandler = func(client MQTT.Client, mag MQTT.Message) {
+			result.count = result.count + 1
+			fmt.Print("now count is: ")
+			fmt.Println(result.count)
+		}
+		token := client.Subscribe(topic, opts.Qos, handller)
+		if token.Wait() && token.Error() != nil {
+			fmt.Printf("Subscribe error: %s\n", token.Error())
+		}
+		results = append(results, result)
+	}
+	time.Sleep(20 * time.Second)
+
+	var totalCount int
+	for _, val := range results {
+		totalCount = totalCount + val.count
+	}
+	fmt.Print("total count is: ")
+	fmt.Println(totalCount)
 
 }
 
@@ -156,7 +191,7 @@ func main() {
 	runtime.GOMAXPROCS(cpus)
 	execOpts := execOptions{}
 	execOpts.Broker = "tcp://169.254.120.135:1883"
-	execOpts.ClientNum = 1
+	execOpts.ClientNum = 5
 	execOpts.Qos = 0
 	execOpts.Count = 100
 	execOpts.Topic = "go-mqtt/"

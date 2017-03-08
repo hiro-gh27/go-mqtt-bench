@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"math/rand"
 	"os"
 	"runtime"
 	"strconv"
@@ -12,6 +13,16 @@ import (
 	MQTT "github.com/eclipse/paho.mqtt.golang"
 )
 
+var randSrc = rand.NewSource(time.Now().UnixNano())
+
+const (
+	rs6Letters       = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	rs6LetterIdxBits = 6
+	rs6LetterIdxMask = 1<<rs6LetterIdxBits - 1
+	rs6LetterIdxMax  = 63 / rs6LetterIdxBits
+)
+
+//使っていないstructいっぱいだお
 type execOptions struct {
 	Broker   string // Broker URI
 	Qos      byte   // QoS(0|1|2)
@@ -94,9 +105,12 @@ func publishRequestAll(clients []MQTT.Client, opts execOptions) int {
 		go func(clientID int) {
 			client := c
 			for index := 0; index < opts.Count; index++ {
+				massage := randomStr(100)
+				fmt.Printf("massagesize= %v\n", len(massage))
 				topic := fmt.Sprintf(opts.Topic+"%d", clientID)
 				//message := createFixedSizeMassage(100)
-				token := client.Publish(topic, opts.Qos, false, fmt.Sprintf("%d", clientID))
+				//token := client.Publish(topic, opts.Qos, false, fmt.Sprintf("%d", clientID))
+				token := client.Publish(topic, opts.Qos, false, massage)
 				//fmt.Printf("Publish : id=%d, count=%d, topic=%s\n", clientID, index, topic)
 				token.Wait()
 			}
@@ -106,7 +120,33 @@ func publishRequestAll(clients []MQTT.Client, opts execOptions) int {
 		}(id)
 	}
 	wg.Wait()
+	//オリジナルでは,totalCountを取得していたけれども, 独立したスレッドから共有資源へのアクセスは複雑になると思われ.
+	//しかし, そんな操作は見当たらず...うむ....
 	return totalCount
+}
+
+//現在理解進行中(途中までは理解できた), これがかなり高速らしい. 標準でutf-8 -> ascii=1バイト
+//参考 -> http://qiita.com/srtkkou/items/ccbddc881d6f3549baf1
+func randomStr(n int) string {
+	b := make([]byte, n)
+	cache, remain := randSrc.Int63(), rs6LetterIdxMax
+	for i := n - 1; i >= 0; {
+		if remain == 0 {
+			cache, remain = randSrc.Int63(), rs6LetterIdxMax
+		}
+		idx := int(cache & rs6LetterIdxMask)
+		if idx < len(rs6Letters) {
+			b[i] = rs6Letters[idx]
+			i--
+		}
+		cache >>= rs6LetterIdxBits
+		remain--
+	}
+	return string(b)
+}
+
+func subscribeRequestAll(clients []MQTT.Client, opts execOptions) {
+
 }
 
 func main() {
@@ -116,9 +156,9 @@ func main() {
 	runtime.GOMAXPROCS(cpus)
 	execOpts := execOptions{}
 	execOpts.Broker = "tcp://169.254.120.135:1883"
-	execOpts.ClientNum = 100
+	execOpts.ClientNum = 1
 	execOpts.Qos = 0
-	execOpts.Count = 10
+	execOpts.Count = 100
 	execOpts.Topic = "go-mqtt/"
 	execute(execOpts)
 

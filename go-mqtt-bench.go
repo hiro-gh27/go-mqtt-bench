@@ -151,29 +151,42 @@ func randomStr(n int) string {
 	return string(b)
 }
 
+//長すぎるかなぁ
 func subscribeRequestAll(clients []MQTT.Client, opts execOptions) {
-	//wg := new(sync.WaitGroup)
+	wg := new(sync.WaitGroup)
 	topic := fmt.Sprintf(opts.Topic + "#")
 	var results []*clientResult
 	for id := 0; id < len(clients); id++ {
-		//wg.Add(1)
+		wg.Add(1)
 
 		client := clients[id]
 		result := &clientResult{}
-		//init is need or not??
-		//result.count = 0
+		ch := make(chan bool)
+
 		var handller MQTT.MessageHandler = func(client MQTT.Client, mag MQTT.Message) {
 			result.count = result.count + 1
+			ch <- true
 			fmt.Print("now count is: ")
 			fmt.Println(result.count)
 		}
+
 		token := client.Subscribe(topic, opts.Qos, handller)
 		if token.Wait() && token.Error() != nil {
 			fmt.Printf("Subscribe error: %s\n", token.Error())
 		}
+
 		results = append(results, result)
+
+		//正確に配送されないと, プログラム終わらない問題
+		go func() {
+			for index := 0; index < opts.Count; index++ {
+				<-ch
+			}
+			close(ch)
+			wg.Done()
+		}()
 	}
-	time.Sleep(20 * time.Second)
+	wg.Wait()
 
 	var totalCount int
 	for _, val := range results {
@@ -193,7 +206,7 @@ func main() {
 	execOpts.Broker = "tcp://169.254.120.135:1883"
 	execOpts.ClientNum = 5
 	execOpts.Qos = 0
-	execOpts.Count = 100
+	execOpts.Count = 1
 	execOpts.Topic = "go-mqtt/"
 	execute(execOpts)
 

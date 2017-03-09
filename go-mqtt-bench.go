@@ -21,7 +21,7 @@ const (
 	rs6LetterIdxMax  = 63 / rs6LetterIdxBits
 )
 
-//使っていないstructいっぱいだお
+//使っていない項目あり...
 type execOptions struct {
 	Broker   string // Broker URI
 	Qos      byte   // QoS(0|1|2)
@@ -74,13 +74,13 @@ func execute(exec func(clients []MQTT.Client, opts execOptions) int, opts execOp
 
 	duration := (endTime.Sub(startTime)).Nanoseconds() / int64(1000000) // nanosecond -> millisecond
 	throughput := float64(totalCount) / float64(duration) * 1000        // messages/sec
-	fmt.Printf("\nResult : broker=%s, clients=%d, totalCount=%d, duration=%dms, throughput=%.2fmessages/sec\n",
+	fmt.Printf("Result : broker=%s, clients=%d, totalCount=%d, duration=%dms, throughput=%.2fmessages/sec\n",
 		opts.Broker, opts.ClientNum, totalCount, duration, throughput)
 
 	asyncDisconnect(clients)
 }
 
-//非同期で切断, たまにsoket errorになるけどなんで??w
+//非同期で切断, たまにsoket errorになるけどなんで??
 func asyncDisconnect(clients []MQTT.Client) {
 	wg := &sync.WaitGroup{}
 	for _, c := range clients {
@@ -93,6 +93,7 @@ func asyncDisconnect(clients []MQTT.Client) {
 	wg.Wait()
 }
 
+//go funcにすると, もう少し早くなるかと...
 func connect(id int, execOpts execOptions) MQTT.Client {
 	//clientID is prosessID and index
 	prosessID := strconv.FormatInt(int64(os.Getpid()), 16)
@@ -116,6 +117,7 @@ func publishRequestAll(clients []MQTT.Client, opts execOptions) int {
 	wg := &sync.WaitGroup{}
 	var results []*clientResult
 	var totalCount int
+	massage := randomStr(100)
 	for id := 0; id < len(clients); id++ {
 		wg.Add(1)
 		c := clients[id]
@@ -126,7 +128,6 @@ func publishRequestAll(clients []MQTT.Client, opts execOptions) int {
 			for index := 0; index < opts.Count; index++ {
 				//interval := rand.Intn(opts.MaxInterval)
 				//time.Sleep(time.Duration(interval) * time.Millisecond)
-				massage := randomStr(100)
 				topic := fmt.Sprintf(opts.Topic+"%d", clientID)
 				token := client.Publish(topic, opts.Qos, false, massage)
 				result.count = result.count + 1
@@ -166,9 +167,9 @@ func randomStr(n int) string {
 		remain--
 	}
 	return string(b)
-
 }
 
+//スループットのためのstart時間が初subscribeの時間と異なる問題あり
 func subscribeRequestAll(clients []MQTT.Client, opts execOptions) int {
 	wg := new(sync.WaitGroup)
 	topic := fmt.Sprintf(opts.Topic + "#")
@@ -214,23 +215,24 @@ func subscribeRequestAll(clients []MQTT.Client, opts execOptions) int {
 	return totalCount
 }
 
+//コマンドラインから指定できると, もっとエレガントなプログラムになるのだが...
 func main() {
 	//use max cpu
 	cpus := runtime.NumCPU()
 	runtime.GOMAXPROCS(cpus)
 
 	execOpts := execOptions{}
-	execOpts.Broker = "tcp://169.254.120.135:1883" // this is my second pc Address
-	//execOpts.Broker = "tcp://localhost:1883"
+	//execOpts.Broker = "tcp://169.254.120.135:1883" // this is my second pc Address
+	execOpts.Broker = "tcp://localhost:1883"
 	execOpts.ClientNum = 100
 	execOpts.Qos = 0
-	execOpts.Count = 5000
+	execOpts.Count = 20
 	execOpts.Topic = "go-mqtt/"
 	execOpts.MaxInterval = 0
 
 	execOpts.Debug = false
 
-	method := "pub"
+	method := "sub"
 	switch method {
 	case "pub":
 		execute(publishRequestAll, execOpts)

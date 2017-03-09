@@ -43,7 +43,7 @@ type clientResult struct {
 	count int
 }
 
-func execute(opts execOptions) {
+func execute(exec func(clients []MQTT.Client, opts execOptions) int, opts execOptions) {
 	var clients []MQTT.Client
 	for index := 0; index < opts.ClientNum; index++ {
 		client := connect(index, opts)
@@ -54,8 +54,7 @@ func execute(opts execOptions) {
 
 	startTime := time.Now()
 	fmt.Println("start")
-	//publishRequestAll(clients, opts)
-	subscribeRequestAll(clients, opts)
+	exec(clients, opts)
 	endTime := time.Now()
 	duration := (endTime.Sub(startTime)).Nanoseconds() / int64(1000000)
 	fmt.Println(duration)
@@ -63,6 +62,7 @@ func execute(opts execOptions) {
 	asyncDisconnect(clients)
 }
 
+//非同期で切断, たまにsoket errorになるけどなんで??
 func asyncDisconnect(clients []MQTT.Client) {
 	wg := &sync.WaitGroup{}
 	for _, c := range clients {
@@ -92,6 +92,7 @@ func connect(id int, execOpts execOptions) MQTT.Client {
 	return client
 }
 
+//no
 func createFixedSizeMassage(size int) string {
 	var buffer bytes.Buffer
 	for index := 0; index < size; index++ {
@@ -149,10 +150,11 @@ func randomStr(n int) string {
 		remain--
 	}
 	return string(b)
+
 }
 
 //長すぎるかなぁ
-func subscribeRequestAll(clients []MQTT.Client, opts execOptions) {
+func subscribeRequestAll(clients []MQTT.Client, opts execOptions) int {
 	wg := new(sync.WaitGroup)
 	topic := fmt.Sprintf(opts.Topic + "#")
 	var results []*clientResult
@@ -194,20 +196,30 @@ func subscribeRequestAll(clients []MQTT.Client, opts execOptions) {
 	}
 	fmt.Print("total count is: ")
 	fmt.Println(totalCount)
-
+	return totalCount
 }
 
 func main() {
 	//デフォルトでcpuは4つ使うのかな...??
+	//
 	cpus := runtime.NumCPU()
 	println(cpus)
 	runtime.GOMAXPROCS(cpus)
 	execOpts := execOptions{}
-	execOpts.Broker = "tcp://169.254.120.135:1883"
+	//execOpts.Broker = "tcp://169.254.120.135:1883"
+	execOpts.Broker = "tcp://localhost:1883"
 	execOpts.ClientNum = 5
 	execOpts.Qos = 0
 	execOpts.Count = 1
 	execOpts.Topic = "go-mqtt/"
-	execute(execOpts)
+	//execute(execOpts)
+
+	method := "pub"
+	switch method {
+	case "pub":
+		execute(publishRequestAll, execOpts)
+	case "sub":
+		execute(subscribeRequestAll, execOpts)
+	}
 
 }

@@ -69,11 +69,13 @@ func execute(exec func(clients []MQTT.Client, opts execOptions) int, opts execOp
 	time.Sleep(3000 * time.Millisecond)
 
 	startTime := time.Now()
-	fmt.Println("start")
-	exec(clients, opts)
+	totalCount := exec(clients, opts)
 	endTime := time.Now()
-	duration := (endTime.Sub(startTime)).Nanoseconds() / int64(1000000)
-	fmt.Println(duration)
+
+	duration := (endTime.Sub(startTime)).Nanoseconds() / int64(1000000) // nanosecond -> millisecond
+	throughput := float64(totalCount) / float64(duration) * 1000        // messages/sec
+	fmt.Printf("\nResult : broker=%s, clients=%d, totalCount=%d, duration=%dms, throughput=%.2fmessages/sec\n",
+		opts.Broker, opts.ClientNum, totalCount, duration, throughput)
 
 	asyncDisconnect(clients)
 }
@@ -112,22 +114,24 @@ func connect(id int, execOpts execOptions) MQTT.Client {
 
 func publishRequestAll(clients []MQTT.Client, opts execOptions) int {
 	wg := &sync.WaitGroup{}
-	totalCount := 0
+	var results []*clientResult
+	var totalCount int
 	for id := 0; id < len(clients); id++ {
 		wg.Add(1)
 		c := clients[id]
+		result := &clientResult{}
+		results = append(results, result)
 		go func(clientID int) {
 			client := c
 			for index := 0; index < opts.Count; index++ {
-
-				interval := rand.Intn(opts.MaxInterval)
-				time.Sleep(time.Duration(interval) * time.Millisecond)
-
+				//interval := rand.Intn(opts.MaxInterval)
+				//time.Sleep(time.Duration(interval) * time.Millisecond)
 				massage := randomStr(100)
 				topic := fmt.Sprintf(opts.Topic+"%d", clientID)
 				token := client.Publish(topic, opts.Qos, false, massage)
+				result.count = result.count + 1
 				if opts.Debug {
-					fmt.Printf("Publish : id=%d, count=%d, topic=%s, interval=%d, massagesize=%v, \n", clientID, index, topic, interval, len(massage))
+					//fmt.Printf("Publish : id=%d, count=%d, topic=%s, interval=%d, massagesize=%v, \n", clientID, index, topic, interval, len(massage))
 				}
 				token.Wait()
 			}
@@ -135,6 +139,12 @@ func publishRequestAll(clients []MQTT.Client, opts execOptions) int {
 		}(id)
 	}
 	wg.Wait()
+
+	//pub all counts.
+	for _, val := range results {
+		totalCount = totalCount + val.count
+	}
+
 	return totalCount
 }
 
@@ -200,27 +210,25 @@ func subscribeRequestAll(clients []MQTT.Client, opts execOptions) int {
 	for _, val := range results {
 		totalCount = totalCount + val.count
 	}
-	fmt.Print("total count is: ")
-	fmt.Println(totalCount)
+
 	return totalCount
 }
 
 func main() {
 	//use max cpu
 	cpus := runtime.NumCPU()
-	println(cpus)
 	runtime.GOMAXPROCS(cpus)
 
 	execOpts := execOptions{}
 	execOpts.Broker = "tcp://169.254.120.135:1883" // this is my second pc Address
 	//execOpts.Broker = "tcp://localhost:1883"
-	execOpts.ClientNum = 10
+	execOpts.ClientNum = 100
 	execOpts.Qos = 0
-	execOpts.Count = 20
+	execOpts.Count = 5000
 	execOpts.Topic = "go-mqtt/"
-	execOpts.MaxInterval = 100
+	execOpts.MaxInterval = 0
 
-	execOpts.Debug = true
+	execOpts.Debug = false
 
 	method := "pub"
 	switch method {

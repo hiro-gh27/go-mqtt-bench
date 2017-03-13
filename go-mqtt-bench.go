@@ -47,34 +47,7 @@ func execute(exec func(clients []MQTT.Client, opts execOptions) int, opts execOp
 	rand.Seed(time.Now().UnixNano())
 	var clients []MQTT.Client
 
-	//slow
-	if opts.Debug {
-		hasErr := false
-		for index := 0; index < opts.ClientNum; index++ {
-			client := connect(index, opts)
-			if client == nil {
-				hasErr = true
-				break
-			}
-			clients = append(clients, client)
-		}
-
-		if hasErr {
-			for _, client := range clients {
-				if client != nil {
-					client.Disconnect(250)
-				}
-				fmt.Println("Connecting Error!!")
-				return
-			}
-		}
-		asyncDisconnect(clients)
-		return
-	}
-
-	//fast
 	clients = asynCconnectRequestAll(opts)
-
 	if clientsHasErr {
 		for _, client := range clients {
 			if client != nil {
@@ -100,11 +73,11 @@ func execute(exec func(clients []MQTT.Client, opts execOptions) int, opts execOp
 	asyncDisconnect(clients)
 }
 
-//非同期でアクセスを試見る
+//非同期でcliert作成と接続
 func asynCconnectRequestAll(execOpts execOptions) []MQTT.Client {
 	wg := &sync.WaitGroup{}
 	var clients []MQTT.Client
-	socketToken := make(chan struct{}, 100) //並行にアクセスするクライアント数を制限, 100ぐらいで良い??
+	socketToken := make(chan struct{}, 100) //並行にアクセスするクライアント数を制限, 多すぎるとSYN/ACK待ちソケット数の制限に引っかかる
 	startTime := time.Now()
 	for index := 0; index < execOpts.ClientNum; index++ {
 		wg.Add(1)
@@ -296,7 +269,7 @@ func main() {
 	execOpts := execOptions{}
 	execOpts.Broker = "tcp://169.254.120.135:1883" // this is my second pc Address
 	//execOpts.Broker = "tcp://localhost:1883"
-	execOpts.ClientNum = 100
+	execOpts.ClientNum = 30
 	execOpts.Qos = 0
 	execOpts.Count = 50
 	execOpts.Topic = "go-mqtt/"

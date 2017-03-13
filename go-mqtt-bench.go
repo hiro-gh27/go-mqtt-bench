@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -101,12 +100,12 @@ func execute(exec func(clients []MQTT.Client, opts execOptions) int, opts execOp
 	asyncDisconnect(clients)
 }
 
-//同時にソケットを作ろうとするので, エラーが発生するかな?? 制限することで回避したつもりだが.
-//たまにバーストする.
+//非同期でアクセスを試見る
 func asynCconnectRequestAll(execOpts execOptions) []MQTT.Client {
 	wg := &sync.WaitGroup{}
 	var clients []MQTT.Client
-	socketToken := make(chan struct{}, 100) //並行にアクセスするクライアント数を制限
+	socketToken := make(chan struct{}, 100) //並行にアクセスするクライアント数を制限, 100ぐらいで良い??
+	startTime := time.Now()
 	for index := 0; index < execOpts.ClientNum; index++ {
 		wg.Add(1)
 		go func(id int) {
@@ -128,13 +127,20 @@ func asynCconnectRequestAll(execOpts execOptions) []MQTT.Client {
 			<-socketToken
 
 			if execOpts.Debug {
-				//fmt.Printf("connection clientID: %d\n", id)
+				fmt.Printf("connection clientID: %d\n", id)
 			}
 			clients = append(clients, client)
 			wg.Done()
 		}(index)
 	}
 	wg.Wait()
+
+	endTime := time.Now()
+	duration := (endTime.Sub(startTime)).Nanoseconds() / int64(1000000)  // nanosecond -> millisecond
+	throughput := float64(execOpts.ClientNum) / float64(duration) * 1000 // messages/sec
+	fmt.Printf("Connect_throughput : broker=%s, clients=%d, duration=%dms, throughput=%.2fconnect/sec\n",
+		execOpts.Broker, execOpts.ClientNum, duration, throughput)
+
 	return clients
 }
 
@@ -155,28 +161,29 @@ func asyncPublishAll(clients []MQTT.Client, opts execOptions) int {
 	wg := &sync.WaitGroup{}
 	var results []*clientResult
 	var totalCount int
-	massage := randomStr(opts.MessageSize)
 	for id := 0; id < len(clients); id++ {
 		wg.Add(1)
 		c := clients[id]
 		result := &clientResult{}
 		results = append(results, result)
-		go func(clientID int) {
+		massage := randomStr(opts.MessageSize)
+		go func(clientID int, massage string) {
 			client := c
 			for index := 0; index < opts.Count; index++ {
-				//interval := rand.Intn(opts.MaxInterval)
-				//time.Sleep(time.Duration(interval) * time.Millisecond)
+				if opts.MaxInterval > 0 {
+					interval := rand.Intn(opts.MaxInterval)
+					time.Sleep(time.Duration(interval) * time.Millisecond)
+				}
 				topic := fmt.Sprintf(opts.Topic+"%d", clientID)
 				token := client.Publish(topic, opts.Qos, false, massage)
 				result.count = result.count + 1
 				if opts.Debug {
 					fmt.Printf("Publish : id=%d, count=%d, topic=%s, massagesize=%v, \n", clientID, index, topic, len(massage))
-					//fmt.Printf("Publish : id=%d, count=%d, topic=%s, interval=%d, massagesize=%v, \n", clientID, index, topic, interval, len(massage))
 				}
 				token.Wait()
 			}
 			wg.Done()
-		}(id)
+		}(id, massage)
 	}
 	wg.Wait()
 
@@ -275,20 +282,25 @@ func randomStr(n int) string {
 	return string(b)
 }
 
+func singlePubSub(clients []MQTT.Client, opts execOptions) int {
+	totalCount := 0
+	return totalCount
+}
+
 //コマンドラインから指定できると, もっとエレガントなプログラムになるのだが...
 func main() {
 	//use max cpu
-	cpus := runtime.NumCPU()
-	runtime.GOMAXPROCS(cpus)
+	//cpus := runtime.NumCPU()
+	//runtime.GOMAXPROCS(cpus)
 
 	execOpts := execOptions{}
 	execOpts.Broker = "tcp://169.254.120.135:1883" // this is my second pc Address
 	//execOpts.Broker = "tcp://localhost:1883"
-	execOpts.ClientNum = 2000
+	execOpts.ClientNum = 100
 	execOpts.Qos = 0
-	execOpts.Count = 10
+	execOpts.Count = 50
 	execOpts.Topic = "go-mqtt/"
-	execOpts.MaxInterval = 0
+	execOpts.MaxInterval = 10
 	execOpts.MessageSize = 100
 
 	execOpts.Debug = false
@@ -299,6 +311,9 @@ func main() {
 		execute(asyncPublishAll, execOpts)
 	case "sub":
 		execute(asyncSubscribeAll, execOpts)
+	case "singlePubSub":
+		execOpts.ClientNum = 2
+		execute(singlePubSub, execOpts)
 	}
 
 }

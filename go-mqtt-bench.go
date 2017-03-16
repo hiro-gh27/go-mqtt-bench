@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"sort"
+
 	MQTT "github.com/eclipse/paho.mqtt.golang"
 )
 
@@ -49,12 +51,13 @@ type execOptions struct {
 
 type clientResult struct {
 	count int
+	time  []time.Time
 }
 
 /**
  * 実行し, スループットの計算をする.
  */
-func execute(exec func(clients []MQTT.Client, opts execOptions) int, opts execOptions) {
+func execute(exec func(clients []MQTT.Client, opts execOptions) (int, []time.Time), opts execOptions) {
 	rand.Seed(time.Now().UnixNano())
 	//var clients []MQTT.Client
 
@@ -73,8 +76,11 @@ func execute(exec func(clients []MQTT.Client, opts execOptions) int, opts execOp
 	time.Sleep(3000 * time.Millisecond)
 
 	startTime := time.Now()
-	totalCount := exec(clients, opts)
+	totalCount, pubTimes := exec(clients, opts)
 	endTime := time.Now()
+
+	//thoroughputCalc(pubTimes)
+	testThoroughputCalc(pubTimes)
 
 	duration := (endTime.Sub(startTime)).Nanoseconds() / int64(1000000) // nanosecond -> millisecond
 	throughput := float64(totalCount) / float64(duration) * 1000        // messages/sec
@@ -115,7 +121,7 @@ func asynCconnectRequestAll(execOpts execOptions) ([]MQTT.Client, []time.Time) {
 				times = append(times, time)
 			}
 			if execOpts.Debug {
-				//fmt.Printf("connection clientID: %d\n", id)
+				fmt.Printf("connection clientID: %d\n", id)
 			}
 			wg.Done()
 		}(index)
@@ -143,10 +149,12 @@ func asyncDisconnect(clients []MQTT.Client) {
 /**
  * 非同期でPublishをそれぞれのクライアントが行う.
  */
-func asyncPublishAll(clients []MQTT.Client, opts execOptions) int {
+func asyncPublishAll(clients []MQTT.Client, opts execOptions) (int, []time.Time) {
 	wg := &sync.WaitGroup{}
 	var results []*clientResult
 	var totalCount int
+	startTime := time.Now()
+	fmt.Printf("start time is %s\n", startTime)
 	for id := 0; id < len(clients); id++ {
 		wg.Add(1)
 		c := clients[id]
@@ -162,32 +170,42 @@ func asyncPublishAll(clients []MQTT.Client, opts execOptions) int {
 				massage := randomMessage(opts.MessageSize)
 				topic := fmt.Sprintf(opts.Topic+"%d", clientID)
 				token := client.Publish(topic, opts.Qos, false, massage)
-				result.count = result.count + 1
 				if opts.Debug {
 					fmt.Printf("Publish : id=%d, count=%d, topic=%s, massagesize=%v, \n", clientID, index, topic, len(massage))
 				}
 				token.Wait()
+				time := time.Now()
+				result.time = append(result.time, time)
+				result.count = result.count + 1
 			}
 			wg.Done()
 		}(id)
 	}
 	wg.Wait()
-
+	endTime := time.Now()
+	fmt.Printf("end time is %s\n", endTime)
+	var testTime []time.Time
+	testTime = append(testTime, startTime)
 	//pub all counts.
 	for _, val := range results {
 		totalCount = totalCount + val.count
+		for _, time := range val.time {
+			testTime = append(testTime, time)
+		}
 	}
+	//testThoroughputCalc(testTime)
 
-	return totalCount
+	return totalCount, testTime
 }
 
 /**
  * 非同期でsubscribeを行う.
  */
-func asyncSubscribeAll(clients []MQTT.Client, opts execOptions) int {
+func asyncSubscribeAll(clients []MQTT.Client, opts execOptions) (int, []time.Time) {
 	wg := new(sync.WaitGroup)
 	topic := fmt.Sprintf(opts.Topic + "#")
 	var results []*clientResult
+	var times []time.Time
 	for id := 0; id < len(clients); id++ {
 		wg.Add(1)
 		client := clients[id]
@@ -223,7 +241,7 @@ func asyncSubscribeAll(clients []MQTT.Client, opts execOptions) int {
 		totalCount = totalCount + val.count
 	}
 
-	return totalCount
+	return totalCount, times
 }
 
 /**
@@ -281,18 +299,49 @@ func randomMessage(n int) string {
 	return string(message)
 }
 
-func singlePubSub(clients []MQTT.Client, opts execOptions) int {
+func singlePubSub(clients []MQTT.Client, opts execOptions) (int, []time.Time) {
+	var times []time.Time
 	totalCount := 0
-	return totalCount
+	return totalCount, times
 }
 
+/**
+ * タイムスライスからスループットを求める.
+ */
 func thoroughputCalc(times []time.Time) {
 	totalCount := len(times)
 	startTime := times[0]
 	endTime := times[totalCount-1]
+	test := endTime.Sub(startTime).Nanoseconds()
+	fmt.Println(test)
 	duration := (endTime.Sub(startTime)).Nanoseconds() / int64(1000000) // nanosecond -> millisecond
 	throughput := float64(totalCount) / float64(duration) * 1000        // messages/sec
-	fmt.Printf("テストスループット : totalCount=%d, duration=%dms, throughput=%.2fmessages/sec\n",
+	fmt.Printf("コネクションスループット : totalCount=%d, duration=%dms, throughput=%.2fmessages/sec\n",
+		totalCount, duration, throughput)
+}
+
+func testThoroughputCalc(times []time.Time) {
+	totalCount := len(times) - 1
+	//intStartTime := startTime.Minute()*60*1000000000 + startTime.Second()*1000000000 + startTime.Nanosecond()
+
+	//fmt.Printf("nanoStartTime is :%d\n", intStartTime)
+
+	var intTimes []int
+	for _, t := range times {
+		fmt.Println(t)
+		intTime := t.Minute()*60*1000000000 + t.Second()*1000000000 + t.Nanosecond()
+		intTimes = append(intTimes, intTime)
+	}
+	//intTimes = sort.IntSlice(intTimes)
+	sort.Sort(sort.IntSlice(intTimes))
+	startTime := intTimes[0]
+	endTime := intTimes[totalCount]
+	fmt.Println("ここからスタートエンド")
+	fmt.Println(startTime)
+	fmt.Println(endTime)
+	duration := (endTime - startTime) / 1000000                  // nanosecond -> millisecond
+	throughput := float64(totalCount) / float64(duration) * 1000 // messages/sec
+	fmt.Printf("pub/subスループット : totalCount=%d, duration=%dms, throughput=%.2fmessages/sec\n",
 		totalCount, duration, throughput)
 }
 
@@ -303,13 +352,13 @@ func main() {
 	//runtime.GOMAXPROCS(cpus)
 
 	execOpts := execOptions{}
-	//execOpts.Broker = "tcp://169.254.120.135:1883" // this is my second pc Address
-	execOpts.Broker = "tcp://localhost:1883"
-	execOpts.ClientNum = 200
+	execOpts.Broker = "tcp://169.254.120.135:1883" // this is my second pc Address
+	//execOpts.Broker = "tcp://localhost:1883"
+	execOpts.ClientNum = 10
 	execOpts.Qos = 0
-	execOpts.Count = 1
+	execOpts.Count = 100
 	execOpts.Topic = "go-mqtt/"
-	execOpts.MaxInterval = 10
+	execOpts.MaxInterval = 1000
 	execOpts.MessageSize = 100
 
 	execOpts.Debug = false

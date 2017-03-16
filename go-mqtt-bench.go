@@ -193,11 +193,13 @@ func asyncSubscribeAll(clients []MQTT.Client, opts execOptions) {
 	wg := new(sync.WaitGroup)
 	topic := fmt.Sprintf(opts.Topic + "#")
 	var results []*clientResult
+
 	for id := 0; id < len(clients); id++ {
 		wg.Add(1)
 		client := clients[id]
 		result := &clientResult{}
 		ch := make(chan bool)
+
 		/**
 		 * callBack function
 		 */
@@ -207,12 +209,15 @@ func asyncSubscribeAll(clients []MQTT.Client, opts execOptions) {
 			fmt.Print("now count is: ")
 			fmt.Println(result.count)
 		}
+
 		token := client.Subscribe(topic, opts.Qos, handller)
 		if token.Wait() && token.Error() != nil {
 			fmt.Printf("Subscribe error: %s\n", token.Error())
 		}
 		results = append(results, result)
-
+		/**
+		 * go function
+		 */
 		go func() {
 			for index := 0; index < opts.Count; index++ {
 				<-ch

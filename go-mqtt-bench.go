@@ -57,7 +57,7 @@ type clientResult struct {
 /**
  * 実行し, スループットの計算をする.
  */
-func execute(exec func(clients []MQTT.Client, opts execOptions) (int, []time.Time), opts execOptions) {
+func execute(exec func(clients []MQTT.Client, opts execOptions), opts execOptions) {
 	rand.Seed(time.Now().UnixNano())
 	//var clients []MQTT.Client
 
@@ -75,17 +75,7 @@ func execute(exec func(clients []MQTT.Client, opts execOptions) (int, []time.Tim
 	//wait a little to stability. 3000 ms is suitable :-)
 	time.Sleep(3000 * time.Millisecond)
 
-	startTime := time.Now()
-	totalCount, pubTimes := exec(clients, opts)
-	endTime := time.Now()
-
-	//thoroughputCalc(pubTimes)
-	testThoroughputCalc(pubTimes)
-
-	duration := (endTime.Sub(startTime)).Nanoseconds() / int64(1000000) // nanosecond -> millisecond
-	throughput := float64(totalCount) / float64(duration) * 1000        // messages/sec
-	fmt.Printf("Result : broker=%s, clients=%d, totalCount=%d, duration=%dms, throughput=%.2fmessages/sec\n",
-		opts.Broker, opts.ClientNum, totalCount, duration, throughput)
+	exec(clients, opts)
 
 	asyncDisconnect(clients)
 }
@@ -149,63 +139,57 @@ func asyncDisconnect(clients []MQTT.Client) {
 /**
  * 非同期でPublishをそれぞれのクライアントが行う.
  */
-func asyncPublishAll(clients []MQTT.Client, opts execOptions) (int, []time.Time) {
+func asyncPublishAll(clients []MQTT.Client, opts execOptions) {
 	wg := &sync.WaitGroup{}
-	var results []*clientResult
-	var totalCount int
 	startTime := time.Now()
-	fmt.Printf("start time is %s\n", startTime)
+	var results []*clientResult
+
 	for id := 0; id < len(clients); id++ {
 		wg.Add(1)
 		c := clients[id]
 		result := &clientResult{}
 		results = append(results, result)
+
 		go func(clientID int) {
 			client := c
 			for index := 0; index < opts.Count; index++ {
+				massage := randomMessage(opts.MessageSize)
+				topic := fmt.Sprintf(opts.Topic+"%d", clientID)
 				if opts.MaxInterval > 0 {
 					interval := rand.Intn(opts.MaxInterval)
 					time.Sleep(time.Duration(interval) * time.Millisecond)
 				}
-				massage := randomMessage(opts.MessageSize)
-				topic := fmt.Sprintf(opts.Topic+"%d", clientID)
 				token := client.Publish(topic, opts.Qos, false, massage)
+				token.Wait()
+				result.time = append(result.time, time.Now())
 				if opts.Debug {
 					fmt.Printf("Publish : id=%d, count=%d, topic=%s, massagesize=%v, \n", clientID, index, topic, len(massage))
 				}
-				token.Wait()
-				time := time.Now()
-				result.time = append(result.time, time)
-				result.count = result.count + 1
 			}
 			wg.Done()
 		}(id)
+
 	}
 	wg.Wait()
-	endTime := time.Now()
-	fmt.Printf("end time is %s\n", endTime)
-	var testTime []time.Time
-	testTime = append(testTime, startTime)
-	//pub all counts.
+
+	//スループットの手続き
+	var times []time.Time
+	times = append(times, startTime)
 	for _, val := range results {
-		totalCount = totalCount + val.count
 		for _, time := range val.time {
-			testTime = append(testTime, time)
+			times = append(times, time)
 		}
 	}
-	//testThoroughputCalc(testTime)
-
-	return totalCount, testTime
+	pubsubThoroughputCalc(times)
 }
 
 /**
  * 非同期でsubscribeを行う.
  */
-func asyncSubscribeAll(clients []MQTT.Client, opts execOptions) (int, []time.Time) {
+func asyncSubscribeAll(clients []MQTT.Client, opts execOptions) {
 	wg := new(sync.WaitGroup)
 	topic := fmt.Sprintf(opts.Topic + "#")
 	var results []*clientResult
-	var times []time.Time
 	for id := 0; id < len(clients); id++ {
 		wg.Add(1)
 		client := clients[id]
@@ -219,12 +203,13 @@ func asyncSubscribeAll(clients []MQTT.Client, opts execOptions) (int, []time.Tim
 			fmt.Print("now count is: ")
 			fmt.Println(result.count)
 		}
+
 		token := client.Subscribe(topic, opts.Qos, handller)
 		if token.Wait() && token.Error() != nil {
 			fmt.Printf("Subscribe error: %s\n", token.Error())
 		}
 		results = append(results, result)
-		//all Subscriber wait "opts.Count" massage, but less massege can't unlock....
+
 		go func() {
 			for index := 0; index < opts.Count; index++ {
 				<-ch
@@ -241,7 +226,6 @@ func asyncSubscribeAll(clients []MQTT.Client, opts execOptions) (int, []time.Tim
 		totalCount = totalCount + val.count
 	}
 
-	return totalCount, times
 }
 
 /**
@@ -299,10 +283,15 @@ func randomMessage(n int) string {
 	return string(message)
 }
 
-func singlePubSub(clients []MQTT.Client, opts execOptions) (int, []time.Time) {
-	var times []time.Time
-	totalCount := 0
-	return totalCount, times
+/**
+ * 応答時間を求める.
+ */
+func singlePubSub(clients []MQTT.Client, opts execOptions) {
+	/*
+		var times []time.Time
+		totalCount := 0
+	*/
+	//return totalCount, times
 }
 
 /**
@@ -320,25 +309,19 @@ func thoroughputCalc(times []time.Time) {
 		totalCount, duration, throughput)
 }
 
-func testThoroughputCalc(times []time.Time) {
+/**
+ * 未sortのタイムスライスから, スループットを求める.
+ */
+func pubsubThoroughputCalc(times []time.Time) {
 	totalCount := len(times) - 1
-	//intStartTime := startTime.Minute()*60*1000000000 + startTime.Second()*1000000000 + startTime.Nanosecond()
-
-	//fmt.Printf("nanoStartTime is :%d\n", intStartTime)
-
 	var intTimes []int
 	for _, t := range times {
-		fmt.Println(t)
 		intTime := t.Minute()*60*1000000000 + t.Second()*1000000000 + t.Nanosecond()
 		intTimes = append(intTimes, intTime)
 	}
-	//intTimes = sort.IntSlice(intTimes)
 	sort.Sort(sort.IntSlice(intTimes))
 	startTime := intTimes[0]
 	endTime := intTimes[totalCount]
-	fmt.Println("ここからスタートエンド")
-	fmt.Println(startTime)
-	fmt.Println(endTime)
 	duration := (endTime - startTime) / 1000000                  // nanosecond -> millisecond
 	throughput := float64(totalCount) / float64(duration) * 1000 // messages/sec
 	fmt.Printf("pub/subスループット : totalCount=%d, duration=%dms, throughput=%.2fmessages/sec\n",
@@ -347,16 +330,18 @@ func testThoroughputCalc(times []time.Time) {
 
 //コマンドラインから指定できると, もっとエレガントなプログラムになるのだが...
 func main() {
-	//use max cpu
-	//cpus := runtime.NumCPU()
-	//runtime.GOMAXPROCS(cpus)
+	/*
+		use max cpu
+		cpus := runtime.NumCPU()
+		runtime.GOMAXPROCS(cpus)
+	*/
 
 	execOpts := execOptions{}
-	execOpts.Broker = "tcp://169.254.120.135:1883" // this is my second pc Address
-	//execOpts.Broker = "tcp://localhost:1883"
+	//execOpts.Broker = "tcp://169.254.120.135:1883"
+	execOpts.Broker = "tcp://localhost:1883"
 	execOpts.ClientNum = 10
 	execOpts.Qos = 0
-	execOpts.Count = 100
+	execOpts.Count = 1
 	execOpts.Topic = "go-mqtt/"
 	execOpts.MaxInterval = 1000
 	execOpts.MessageSize = 100

@@ -40,6 +40,7 @@ type execOptions struct {
 	Topic    string // Topicのルート
 	Username string // ユーザID
 	Password string // パスワード
+	Method   string // 実行メソッド
 	//CertConfig        CertConfig // 認証定義
 	ClientNum         int  // クライアントの同時実行数
 	Count             int  // 1クライアント当たりのメッセージ数
@@ -70,7 +71,7 @@ func execute(exec func(clients []MQTT.Client, opts execOptions), opts execOption
 		return
 	}
 
-	thoroughputCalc(times)
+	connectThoroughput(times)
 
 	//wait a little to stability. 3000 ms is suitable :-)
 	time.Sleep(3000 * time.Millisecond)
@@ -149,7 +150,9 @@ func asyncPublishAll(clients []MQTT.Client, opts execOptions) {
 		c := clients[id]
 		result := &clientResult{}
 		results = append(results, result)
-
+		/**
+		 * go func that do async Publish
+		 */
 		go func(clientID int) {
 			client := c
 			for index := 0; index < opts.Count; index++ {
@@ -180,7 +183,7 @@ func asyncPublishAll(clients []MQTT.Client, opts execOptions) {
 			times = append(times, time)
 		}
 	}
-	pubsubThoroughputCalc(times)
+	pubsubThoroughput(times, opts.Method)
 }
 
 /**
@@ -195,15 +198,15 @@ func asyncSubscribeAll(clients []MQTT.Client, opts execOptions) {
 		client := clients[id]
 		result := &clientResult{}
 		ch := make(chan bool)
-
-		//call back func when massage arrive
+		/**
+		 * callBack function
+		 */
 		var handller MQTT.MessageHandler = func(client MQTT.Client, mag MQTT.Message) {
 			result.count = result.count + 1
 			ch <- true
 			fmt.Print("now count is: ")
 			fmt.Println(result.count)
 		}
-
 		token := client.Subscribe(topic, opts.Qos, handller)
 		if token.Wait() && token.Error() != nil {
 			fmt.Printf("Subscribe error: %s\n", token.Error())
@@ -229,7 +232,7 @@ func asyncSubscribeAll(clients []MQTT.Client, opts execOptions) {
 }
 
 /**
- * Brokerに順次接続する. 非同期アクセス版を作ったので, そちらを使っている.
+ * Brokerに順次接続する. 並行処理版を作成したので, そちらを利用中
  */
 func connect(id int, execOpts execOptions) MQTT.Client {
 	prosessID := strconv.FormatInt(int64(os.Getpid()), 16)
@@ -287,17 +290,12 @@ func randomMessage(n int) string {
  * 応答時間を求める.
  */
 func singlePubSub(clients []MQTT.Client, opts execOptions) {
-	/*
-		var times []time.Time
-		totalCount := 0
-	*/
-	//return totalCount, times
 }
 
 /**
  * タイムスライスからスループットを求める.
  */
-func thoroughputCalc(times []time.Time) {
+func connectThoroughput(times []time.Time) {
 	totalCount := len(times)
 	startTime := times[0]
 	endTime := times[totalCount-1]
@@ -312,7 +310,7 @@ func thoroughputCalc(times []time.Time) {
 /**
  * 未sortのタイムスライスから, スループットを求める.
  */
-func pubsubThoroughputCalc(times []time.Time) {
+func pubsubThoroughput(times []time.Time, method string) {
 	totalCount := len(times) - 1
 	var intTimes []int
 	for _, t := range times {
@@ -324,8 +322,8 @@ func pubsubThoroughputCalc(times []time.Time) {
 	endTime := intTimes[totalCount]
 	duration := (endTime - startTime) / 1000000                  // nanosecond -> millisecond
 	throughput := float64(totalCount) / float64(duration) * 1000 // messages/sec
-	fmt.Printf("pub/subスループット : totalCount=%d, duration=%dms, throughput=%.2fmessages/sec\n",
-		totalCount, duration, throughput)
+	fmt.Printf("%sスループット : totalCount=%d, duration=%dms, throughput=%.2fmessages/sec\n",
+		method, totalCount, duration, throughput)
 }
 
 //コマンドラインから指定できると, もっとエレガントなプログラムになるのだが...
@@ -348,8 +346,8 @@ func main() {
 
 	execOpts.Debug = false
 
-	method := "pub"
-	switch method {
+	execOpts.Method = "pub"
+	switch execOpts.Method {
 	case "pub":
 		execute(asyncPublishAll, execOpts)
 	case "sub":

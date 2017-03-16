@@ -14,6 +14,14 @@ import (
 var randSrc = rand.NewSource(time.Now().UnixNano())
 var clientsHasErr = false
 
+//use randomMessage
+const (
+	letters       = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	letterIdxBits = 6
+	letterIdxMask = 1<<letterIdxBits - 1
+)
+
+//use randomStr
 const (
 	rs6Letters       = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	rs6LetterIdxBits = 6
@@ -43,20 +51,23 @@ type clientResult struct {
 	count int
 }
 
+/**
+ * 実行し, スループットの計算をする.
+ */
 func execute(exec func(clients []MQTT.Client, opts execOptions) int, opts execOptions) {
 	rand.Seed(time.Now().UnixNano())
-	var clients []MQTT.Client
+	//var clients []MQTT.Client
 
-	clients = asynCconnectRequestAll(opts)
-	if clientsHasErr {
-		for _, client := range clients {
-			if client != nil {
-				client.Disconnect(250)
-			}
-		}
-		fmt.Println("Connecting Error, exit program.")
+	clients, times := asynCconnectRequestAll(opts)
+
+	if len(clients) < opts.ClientNum {
+		fmt.Println("========= Error!! Disconnect and Exit ==========")
+		fmt.Printf("clients: %d, opts.ClienNum: %d\n", len(clients), opts.ClientNum)
+		asyncDisconnect(clients)
 		return
 	}
+
+	thoroughputCalc(times)
 
 	//wait a little to stability. 3000 ms is suitable :-)
 	time.Sleep(3000 * time.Millisecond)
@@ -73,12 +84,14 @@ func execute(exec func(clients []MQTT.Client, opts execOptions) int, opts execOp
 	asyncDisconnect(clients)
 }
 
-//非同期でcliert作成と接続
-func asynCconnectRequestAll(execOpts execOptions) []MQTT.Client {
+/**
+ * 非同期でクライアント作成と接続を行う.
+ */
+func asynCconnectRequestAll(execOpts execOptions) ([]MQTT.Client, []time.Time) {
 	wg := &sync.WaitGroup{}
 	var clients []MQTT.Client
+	var times []time.Time
 	socketToken := make(chan struct{}, 100) //並行にアクセスするクライアント数を制限, 多すぎるとSYN/ACK待ちソケット数の制限に引っかかる
-	startTime := time.Now()
 	for index := 0; index < execOpts.ClientNum; index++ {
 		wg.Add(1)
 		go func(id int) {
@@ -92,32 +105,29 @@ func asynCconnectRequestAll(execOpts execOptions) []MQTT.Client {
 			socketToken <- struct{}{}
 			token := client.Connect()
 			token.Wait()
-			if token.Wait() && token.Error() != nil {
-				fmt.Printf("Connected error: %s\n", token.Error())
-				client = nil
-				clientsHasErr = true
-			}
 			<-socketToken
 
-			if execOpts.Debug {
-				fmt.Printf("connection clientID: %d\n", id)
+			if token.Wait() && token.Error() != nil {
+				fmt.Printf("Connected error: %s\n", token.Error())
+			} else {
+				time := time.Now()
+				clients = append(clients, client)
+				times = append(times, time)
 			}
-			clients = append(clients, client)
+			if execOpts.Debug {
+				//fmt.Printf("connection clientID: %d\n", id)
+			}
 			wg.Done()
 		}(index)
 	}
 	wg.Wait()
 
-	endTime := time.Now()
-	duration := (endTime.Sub(startTime)).Nanoseconds() / int64(1000000)  // nanosecond -> millisecond
-	throughput := float64(execOpts.ClientNum) / float64(duration) * 1000 // messages/sec
-	fmt.Printf("Connect_throughput : broker=%s, clients=%d, duration=%dms, throughput=%.2fconnect/sec\n",
-		execOpts.Broker, execOpts.ClientNum, duration, throughput)
-
-	return clients
+	return clients, times
 }
 
-//非同期で切断, たまにsoket errorになるけどなんで??
+/**
+ * 非同期で切断を行う.
+ */
 func asyncDisconnect(clients []MQTT.Client) {
 	wg := &sync.WaitGroup{}
 	for _, c := range clients {
@@ -130,6 +140,9 @@ func asyncDisconnect(clients []MQTT.Client) {
 	wg.Wait()
 }
 
+/**
+ * 非同期でPublishをそれぞれのクライアントが行う.
+ */
 func asyncPublishAll(clients []MQTT.Client, opts execOptions) int {
 	wg := &sync.WaitGroup{}
 	var results []*clientResult
@@ -139,14 +152,14 @@ func asyncPublishAll(clients []MQTT.Client, opts execOptions) int {
 		c := clients[id]
 		result := &clientResult{}
 		results = append(results, result)
-		massage := randomStr(opts.MessageSize)
-		go func(clientID int, massage string) {
+		go func(clientID int) {
 			client := c
 			for index := 0; index < opts.Count; index++ {
 				if opts.MaxInterval > 0 {
 					interval := rand.Intn(opts.MaxInterval)
 					time.Sleep(time.Duration(interval) * time.Millisecond)
 				}
+				massage := randomMessage(opts.MessageSize)
 				topic := fmt.Sprintf(opts.Topic+"%d", clientID)
 				token := client.Publish(topic, opts.Qos, false, massage)
 				result.count = result.count + 1
@@ -156,7 +169,7 @@ func asyncPublishAll(clients []MQTT.Client, opts execOptions) int {
 				token.Wait()
 			}
 			wg.Done()
-		}(id, massage)
+		}(id)
 	}
 	wg.Wait()
 
@@ -168,14 +181,15 @@ func asyncPublishAll(clients []MQTT.Client, opts execOptions) int {
 	return totalCount
 }
 
-//スループットのためのstart時間が初subscribeの時間と異なる問題あり
+/**
+ * 非同期でsubscribeを行う.
+ */
 func asyncSubscribeAll(clients []MQTT.Client, opts execOptions) int {
 	wg := new(sync.WaitGroup)
 	topic := fmt.Sprintf(opts.Topic + "#")
 	var results []*clientResult
 	for id := 0; id < len(clients); id++ {
 		wg.Add(1)
-
 		client := clients[id]
 		result := &clientResult{}
 		ch := make(chan bool)
@@ -187,13 +201,11 @@ func asyncSubscribeAll(clients []MQTT.Client, opts execOptions) int {
 			fmt.Print("now count is: ")
 			fmt.Println(result.count)
 		}
-
 		token := client.Subscribe(topic, opts.Qos, handller)
 		if token.Wait() && token.Error() != nil {
 			fmt.Printf("Subscribe error: %s\n", token.Error())
 		}
 		results = append(results, result)
-
 		//all Subscriber wait "opts.Count" massage, but less massege can't unlock....
 		go func() {
 			for index := 0; index < opts.Count; index++ {
@@ -214,17 +226,16 @@ func asyncSubscribeAll(clients []MQTT.Client, opts execOptions) int {
 	return totalCount
 }
 
-//go funcにすると, もう少し早くなるかと...
+/**
+ * Brokerに順次接続する. 非同期アクセス版を作ったので, そちらを使っている.
+ */
 func connect(id int, execOpts execOptions) MQTT.Client {
-	//clientID is prosessID and index
 	prosessID := strconv.FormatInt(int64(os.Getpid()), 16)
 	clientID := fmt.Sprintf("go-mqtt-bench%s-%d", prosessID, id)
 
 	opts := MQTT.NewClientOptions()
 	opts.AddBroker(execOpts.Broker)
 	opts.SetClientID(clientID)
-	//opts.SetCleanSession(false)
-
 	client := MQTT.NewClient(opts)
 	token := client.Connect()
 	if token.Wait() && token.Error() != nil {
@@ -234,9 +245,9 @@ func connect(id int, execOpts execOptions) MQTT.Client {
 	return client
 }
 
-//this random strings is very fast!!
-//defaul string is utf-8, so 1 character equal 8bit -> 1byte
-//look >> http://qiita.com/srtkkou/items/ccbddc881d6f3549baf1
+/**
+ * 高速にnバイト文字列を生成する. 同時並行で使えないので利用停止.
+ */
 func randomStr(n int) string {
 	b := make([]byte, n)
 	cache, remain := randSrc.Int63(), rs6LetterIdxMax
@@ -255,9 +266,34 @@ func randomStr(n int) string {
 	return string(b)
 }
 
+/**
+ * nバイト文字列を生成する. 同時並行でも使える.
+ */
+func randomMessage(n int) string {
+	message := make([]byte, n)
+	for i := 0; i < n; {
+		index := int(rand.Int63() & letterIdxMask)
+		if index < len(letters) {
+			message[i] = letters[index]
+			i++
+		}
+	}
+	return string(message)
+}
+
 func singlePubSub(clients []MQTT.Client, opts execOptions) int {
 	totalCount := 0
 	return totalCount
+}
+
+func thoroughputCalc(times []time.Time) {
+	totalCount := len(times)
+	startTime := times[0]
+	endTime := times[totalCount-1]
+	duration := (endTime.Sub(startTime)).Nanoseconds() / int64(1000000) // nanosecond -> millisecond
+	throughput := float64(totalCount) / float64(duration) * 1000        // messages/sec
+	fmt.Printf("テストスループット : totalCount=%d, duration=%dms, throughput=%.2fmessages/sec\n",
+		totalCount, duration, throughput)
 }
 
 //コマンドラインから指定できると, もっとエレガントなプログラムになるのだが...
@@ -267,11 +303,11 @@ func main() {
 	//runtime.GOMAXPROCS(cpus)
 
 	execOpts := execOptions{}
-	execOpts.Broker = "tcp://169.254.120.135:1883" // this is my second pc Address
-	//execOpts.Broker = "tcp://localhost:1883"
-	execOpts.ClientNum = 30
+	//execOpts.Broker = "tcp://169.254.120.135:1883" // this is my second pc Address
+	execOpts.Broker = "tcp://localhost:1883"
+	execOpts.ClientNum = 200
 	execOpts.Qos = 0
-	execOpts.Count = 50
+	execOpts.Count = 1
 	execOpts.Topic = "go-mqtt/"
 	execOpts.MaxInterval = 10
 	execOpts.MessageSize = 100

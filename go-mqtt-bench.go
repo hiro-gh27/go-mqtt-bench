@@ -236,6 +236,8 @@ func asyncSubscribeAll(clients []MQTT.Client, opts execOptions) {
 
 }
 
+// 遊び
+
 /**
  * Brokerに順次接続する. 並行処理版を作成したので, そちらを利用中
  */

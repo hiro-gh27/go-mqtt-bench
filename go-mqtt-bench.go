@@ -236,8 +236,6 @@ func asyncSubscribeAll(clients []MQTT.Client, opts execOptions) {
 
 }
 
-// 確認してます
-
 /**
  * Brokerに順次接続する. 並行処理版を作成したので, そちらを利用中
  */
@@ -342,8 +340,8 @@ func main() {
 	*/
 
 	execOpts := execOptions{}
-	//execOpts.Broker = "tcp://169.254.120.135:1883"
-	execOpts.Broker = "tcp://localhost:1883"
+	execOpts.Broker = "tcp://169.254.120.135:1883"
+	//execOpts.Broker = "tcp://localhost:1883"
 	execOpts.ClientNum = 10
 	execOpts.Qos = 0
 	execOpts.Count = 1

@@ -295,6 +295,49 @@ func randomMessage(n int) string {
  * 応答時間を求める.
  */
 func singlePubSub(clients []MQTT.Client, opts execOptions) {
+	wg := new(sync.WaitGroup)
+	topic := fmt.Sprintf(opts.Topic + "#")
+	var results []*clientResult
+	publisher := clients[len(clients)-1]
+	clients = clients[:len(clients)-1]
+
+	for _, client := range clients {
+		wg.Add(1)
+		result := &clientResult{}
+		results = append(results, result)
+		/**
+		 * call back function when message arrive
+		 */
+		var handller MQTT.MessageHandler = func(client MQTT.Client, msg MQTT.Message) {
+			result.time = append(result.time, time.Now())
+			fmt.Printf("TOPIC: %s\n", msg.Topic())
+			fmt.Printf("MSG: %s\n", msg.Payload())
+			wg.Done()
+		}
+		token := client.Subscribe(topic, opts.Qos, handller)
+		if token.Wait() && token.Error() != nil {
+			fmt.Printf("Subscribe error: %s\n", token.Error())
+		}
+	}
+	massage := randomMessage(opts.MessageSize)
+	pubTopic := fmt.Sprintf(opts.Topic + "hog")
+	token := publisher.Publish(pubTopic, opts.Qos, false, massage)
+	token.Wait()
+	if token.Wait() && token.Error() != nil {
+		fmt.Printf("Publish error: %s\n", token.Error())
+	}
+	startTime := time.Now()
+	fmt.Printf("start time is %s", startTime)
+
+	wg.Wait()
+	var times []time.Time
+	times = append(times, startTime)
+	for _, val := range results {
+		for _, time := range val.time {
+			times = append(times, time)
+		}
+	}
+	pubsubThoroughput(times, opts.Method)
 }
 
 /**
@@ -319,6 +362,7 @@ func pubsubThoroughput(times []time.Time, method string) {
 	totalCount := len(times) - 1
 	var intTimes []int
 	for _, t := range times {
+		//fmt.Println(t)
 		intTime := t.Minute()*60*1000000000 + t.Second()*1000000000 + t.Nanosecond()
 		intTimes = append(intTimes, intTime)
 	}
@@ -351,14 +395,15 @@ func main() {
 
 	execOpts.Debug = false
 
-	execOpts.Method = "pub"
+	execOpts.Method = "singlePubSub"
 	switch execOpts.Method {
 	case "pub":
 		execute(asyncPublishAll, execOpts)
 	case "sub":
+		execOpts.ClientNum = execOpts.ClientNum + 1 // 1client will be publisher.
 		execute(asyncSubscribeAll, execOpts)
 	case "singlePubSub":
-		execOpts.ClientNum = 2
+		//execOpts.ClientNum =
 		execute(singlePubSub, execOpts)
 	}
 

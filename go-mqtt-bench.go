@@ -88,18 +88,19 @@ func execute(exec func(clients []MQTT.Client, opts execOptions), opts execOption
 func asynCconnectRequestAll(execOpts execOptions) ([]MQTT.Client, []time.Time) {
 	wg := &sync.WaitGroup{}
 	//var clients []MQTT.Client
-	clients := make([]MQTT.Client, execOpts.ClientNum)
+	//clients := make([]MQTT.Client, execOpts.ClientNum)
+	clients := []*MQTT.Client{}
 	var times []time.Time
 	socketToken := make(chan struct{}, 100) //並行にアクセスするクライアント数を制限, 多すぎるとSYN/ACK待ちソケット数の制限に引っかかる
 	for index := 0; index < execOpts.ClientNum; index++ {
 		wg.Add(1)
+		prosessID := strconv.FormatInt(int64(os.Getpid()), 16)
+		clientID := fmt.Sprintf("go-mqtt-bench%s-%d", prosessID, index)
+		opts := MQTT.NewClientOptions()
+		opts.AddBroker(execOpts.Broker)
+		opts.SetClientID(clientID)
+		client := MQTT.NewClient(opts)
 		go func(id int) {
-			prosessID := strconv.FormatInt(int64(os.Getpid()), 16)
-			clientID := fmt.Sprintf("go-mqtt-bench%s-%d", prosessID, id)
-			opts := MQTT.NewClientOptions()
-			opts.AddBroker(execOpts.Broker)
-			opts.SetClientID(clientID)
-			client := MQTT.NewClient(opts)
 
 			socketToken <- struct{}{}
 			token := client.Connect()

@@ -352,6 +352,7 @@ func singlePubSub(clients []MQTT.Client, opts execOptions) {
 		//wg.Wait()
 		for index := 0; index < len(clients); index++ {
 			times[index] = <-ch
+			//times = append(times, <-ch)
 		}
 		for _, val := range results {
 			for _, time := range val.time {

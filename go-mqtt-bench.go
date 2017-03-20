@@ -311,7 +311,9 @@ func singlePubSub(clients []MQTT.Client, opts execOptions) {
 	publisher := clients[len(clients)-1]
 	clients = clients[:len(clients)-1]
 	ch := make(chan time.Time)
-
+	//times := make([]time.Time, len(clients))
+	//for index := 0; index < len(clients); index++ {
+	//client := clients[index]
 	for _, client := range clients {
 		result := &clientResult{}
 		results = append(results, result)
@@ -320,6 +322,7 @@ func singlePubSub(clients []MQTT.Client, opts execOptions) {
 		 */
 		var handller MQTT.MessageHandler = func(client MQTT.Client, msg MQTT.Message) {
 			arriveTime := time.Now()
+			//times[index] = arriveTime
 			ch <- arriveTime
 			//result.time = append(result.time, time.Now())
 			//fmt.Printf("TOPIC: %s\n", msg.Topic())
@@ -336,7 +339,7 @@ func singlePubSub(clients []MQTT.Client, opts execOptions) {
 
 	for index := 0; index < opts.Count; index++ {
 		//wg.Add(len(clients))
-		var times []time.Time
+		var times = make([]time.Time, len(clients))
 		massage := randomMessage(opts.MessageSize)
 		token := publisher.Publish(pubTopic, opts.Qos, false, massage)
 		token.Wait()
@@ -348,7 +351,7 @@ func singlePubSub(clients []MQTT.Client, opts execOptions) {
 		//fmt.Printf("start time is %s", startTime)
 		//wg.Wait()
 		for index := 0; index < len(clients); index++ {
-			times = append(times, <-ch)
+			times[index] = <-ch
 		}
 		for _, val := range results {
 			for _, time := range val.time {
@@ -408,10 +411,10 @@ func main() {
 	//execOpts.Broker = "tcp://localhost:1883"
 	execOpts.ClientNum = 4000
 	execOpts.Qos = 0
-	execOpts.Count = 50
+	execOpts.Count = 10
 	execOpts.Topic = "go-mqtt/"
 	execOpts.MaxInterval = 1000
-	execOpts.MessageSize = 100
+	execOpts.MessageSize = 10000
 
 	execOpts.Debug = false
 

@@ -63,6 +63,16 @@ func execute(exec func(clients []MQTT.Client, opts execOptions), opts execOption
 	//var clients []MQTT.Client
 
 	clients, times := asynCconnectRequestAll(opts)
+	if clientsHasErr == true {
+		fmt.Println("========= Error!! Disconnect and Exit programs ==========")
+		for index := 0; index < len(clients); index++ {
+			client := clients[index]
+			if client != nil {
+				client.Disconnect(250)
+			}
+		}
+		return
+	}
 
 	if len(clients) < opts.ClientNum {
 		fmt.Println("========= Error!! Disconnect and Exit ==========")
@@ -70,8 +80,7 @@ func execute(exec func(clients []MQTT.Client, opts execOptions), opts execOption
 		asyncDisconnect(clients)
 		return
 	}
-
-	connectThoroughput(times)
+	thoroughputCalc(times, "コネクション")
 
 	//wait a little to stability. 3000 ms is suitable :-)
 	time.Sleep(3000 * time.Millisecond)
@@ -87,33 +96,30 @@ func execute(exec func(clients []MQTT.Client, opts execOptions), opts execOption
  */
 func asynCconnectRequestAll(execOpts execOptions) ([]MQTT.Client, []time.Time) {
 	wg := &sync.WaitGroup{}
-	//var clients []MQTT.Client
-	//clients := make([]MQTT.Client, execOpts.ClientNum)
-	clients := []*MQTT.Client{}
-	var times []time.Time
-	socketToken := make(chan struct{}, 100) //並行にアクセスするクライアント数を制限, 多すぎるとSYN/ACK待ちソケット数の制限に引っかかる
+	clients := make([]MQTT.Client, execOpts.ClientNum)
+	times := make([]time.Time, execOpts.ClientNum)
+	socketToken := make(chan struct{}, 100) //並列で処理を進めたいのだが, ソケット数に規制が存在するため...
+	startTime := time.Now()
 	for index := 0; index < execOpts.ClientNum; index++ {
 		wg.Add(1)
-		prosessID := strconv.FormatInt(int64(os.Getpid()), 16)
-		clientID := fmt.Sprintf("go-mqtt-bench%s-%d", prosessID, index)
-		opts := MQTT.NewClientOptions()
-		opts.AddBroker(execOpts.Broker)
-		opts.SetClientID(clientID)
-		client := MQTT.NewClient(opts)
 		go func(id int) {
-
+			prosessID := strconv.FormatInt(int64(os.Getpid()), 16)
+			clientID := fmt.Sprintf("go-mqtt-bench%s-%d", prosessID, id)
+			opts := MQTT.NewClientOptions()
+			opts.AddBroker(execOpts.Broker)
+			opts.SetClientID(clientID)
+			client := MQTT.NewClient(opts)
 			socketToken <- struct{}{}
 			token := client.Connect()
 			token.Wait()
 			<-socketToken
-
 			if token.Wait() && token.Error() != nil {
 				fmt.Printf("Connected error: %s\n", token.Error())
+				clientsHasErr = true
+				clients[id] = nil
 			} else {
-				time := time.Now()
-				//clients = append(clients, client)
+				times[id] = time.Now()
 				clients[id] = client
-				times = append(times, time)
 			}
 			if execOpts.Debug {
 				fmt.Printf("connection clientID: %d\n", id)
@@ -122,7 +128,7 @@ func asynCconnectRequestAll(execOpts execOptions) ([]MQTT.Client, []time.Time) {
 		}(index)
 	}
 	wg.Wait()
-
+	times = append(times, startTime)
 	return clients, times
 }
 
@@ -187,7 +193,7 @@ func asyncPublishAll(clients []MQTT.Client, opts execOptions) {
 			times = append(times, time)
 		}
 	}
-	pubsubThoroughput(times, opts.Method)
+	thoroughputCalc(times, opts.Method)
 }
 
 /**
@@ -349,7 +355,8 @@ func singlePubSub(clients []MQTT.Client, opts execOptions) {
 				times = append(times, time)
 			}
 		}
-		pubsubThoroughput(times, opts.Method)
+		thoroughputCalc(times, opts.Method)
+		time.Sleep(1000 * time.Millisecond)
 	}
 }
 
@@ -371,7 +378,7 @@ func connectThoroughput(times []time.Time) {
 /**
  * 未sortのタイムスライスから, スループットを求める.
  */
-func pubsubThoroughput(times []time.Time, method string) {
+func thoroughputCalc(times []time.Time, method string) {
 	totalCount := len(times) - 1
 	var intTimes []int
 	for _, t := range times {
@@ -399,9 +406,9 @@ func main() {
 	execOpts := execOptions{}
 	execOpts.Broker = "tcp://169.254.120.135:1883"
 	//execOpts.Broker = "tcp://localhost:1883"
-	execOpts.ClientNum = 2000
+	execOpts.ClientNum = 4000
 	execOpts.Qos = 0
-	execOpts.Count = 10
+	execOpts.Count = 50
 	execOpts.Topic = "go-mqtt/"
 	execOpts.MaxInterval = 1000
 	execOpts.MessageSize = 100

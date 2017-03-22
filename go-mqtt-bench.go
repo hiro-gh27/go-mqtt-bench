@@ -409,17 +409,18 @@ func main() {
 
 	execOpts := execOptions{}
 	execOpts.Broker = "tcp://169.254.120.135:1883"
-	execOpts.Broker = "tcp://localhost:1883"
-	execOpts.ClientNum = 200
+	//execOpts.Broker = "tcp://localhost:1883"
+	execOpts.Broker = "tcp://192.168.56.101:1883"
+	execOpts.ClientNum = 8000
 	execOpts.Qos = 0
-	execOpts.Count = 10000
+	execOpts.Count = 10
 	execOpts.Topic = "go-mqtt/"
 	execOpts.MaxInterval = 0
 	execOpts.MessageSize = 10000
 
 	execOpts.Debug = false
 
-	execOpts.Method = "pub"
+	execOpts.Method = "singlePubSub"
 	switch execOpts.Method {
 	case "pub":
 		execute(asyncPublishAll, execOpts)

@@ -412,7 +412,7 @@ func main() {
 	execOpts.Broker = "tcp://localhost:1883"
 	execOpts.ClientNum = 200
 	execOpts.Qos = 0
-	execOpts.Count = 10000
+	execOpts.Count = 1
 	execOpts.Topic = "go-mqtt/"
 	execOpts.MaxInterval = 0
 	execOpts.MessageSize = 10000
@@ -428,7 +428,6 @@ func main() {
 		execute(asyncSubscribeAll, execOpts)
 	case "singlePubSub":
 		execOpts.ClientNum = execOpts.ClientNum + 1 // 1client will be publisher.
-		//execOpts.ClientNum =
 		execute(singlePubSub, execOpts)
 	}
 

@@ -33,26 +33,27 @@ const (
 
 //使っていない項目多数あり...
 type execOptions struct {
-	Broker   string // Broker URI
-	Qos      byte   // QoS(0|1|2)
-	Retain   bool   // Retain
-	Debug    bool   //デバック
-	Topic    string // Topicのルート
-	Username string // ユーザID
-	Password string // パスワード
-	Method   string // 実行メソッド
-	//CertConfig        CertConfig // 認証定義
-	ClientNum         int  // クライアントの同時実行数
-	Count             int  // 1クライアント当たりのメッセージ数
-	MessageSize       int  // 1メッセージのサイズ(byte)
-	UseDefaultHandler bool // Subscriber個別ではなく、デフォルトのMessageHandlerを利用するかどうか
-	PreTime           int  // 実行前の待機時間(ms)
-	MaxInterval       int  // メッセージ毎の実行間隔時間(ms)
+	Broker            string // Broker URI
+	Qos               byte   // QoS(0|1|2)
+	Retain            bool   // Retain
+	Debug             bool   //デバック
+	Topic             string // Topicのルート
+	Username          string // ユーザID
+	Password          string // パスワード
+	Method            string // 実行メソッド
+	ClientNum         int    // クライアントの同時実行数
+	Count             int    // 1クライアント当たりのメッセージ数
+	MessageSize       int    // 1メッセージのサイズ(byte)
+	UseDefaultHandler bool   // Subscriber個別ではなく、デフォルトのMessageHandlerを利用するかどうか
+	PreTime           int    // 実行前の待機時間(ms)
+	MaxInterval       int    // メッセージ毎の実行間隔時間(ms)
 }
 
 type clientResult struct {
 	count int
 	time  []time.Time
+	t     time.Time
+	id    int
 }
 
 /**
@@ -305,41 +306,46 @@ func randomMessage(n int) string {
  * 応答時間を求める.
  */
 func singlePubSub(clients []MQTT.Client, opts execOptions) {
-	//wg := new(sync.WaitGroup)
+	wg := new(sync.WaitGroup)
 	topic := fmt.Sprintf(opts.Topic + "#")
 	var results []*clientResult
 	publisher := clients[len(clients)-1]
 	clients = clients[:len(clients)-1]
-	ch := make(chan time.Time)
-	//times := make([]time.Time, len(clients))
-	//for index := 0; index < len(clients); index++ {
-	//client := clients[index]
+	//ch := make(chan time.Time)
+	index := 0
 	for _, client := range clients {
 		result := &clientResult{}
 		results = append(results, result)
+		result.id = index
 		/**
 		 * call back function when message arrive
 		 */
 		var handller MQTT.MessageHandler = func(client MQTT.Client, msg MQTT.Message) {
-			arriveTime := time.Now()
-			//times[index] = arriveTime
-			ch <- arriveTime
+			//var id int
+			//id = index
+			//arriveTime := time.Now()
+			//ch <- arriveTime
 			//result.time = append(result.time, time.Now())
 			//fmt.Printf("TOPIC: %s\n", msg.Topic())
+			//fmt.Printf("%d", id)
 			//fmt.Printf("MSG: %s\n", msg.Payload())
-			//wg.Done()
+			//fmt.Printf("id=%d, message=%s\n", result.id, msg.Payload())
+			result.t = time.Now()
+			wg.Done()
 		}
 		token := client.Subscribe(topic, opts.Qos, handller)
 		if token.Wait() && token.Error() != nil {
 			fmt.Printf("Subscribe error: %s\n", token.Error())
 		}
+		index++
 	}
 
 	pubTopic := fmt.Sprintf(opts.Topic + "hog")
 
 	for index := 0; index < opts.Count; index++ {
-		//wg.Add(len(clients))
-		var times = make([]time.Time, len(clients))
+		wg.Add(len(clients))
+		//var times = make([]time.Time, len(clients))
+		var times []time.Time
 		massage := randomMessage(opts.MessageSize)
 		token := publisher.Publish(pubTopic, opts.Qos, false, massage)
 		token.Wait()
@@ -349,15 +355,15 @@ func singlePubSub(clients []MQTT.Client, opts execOptions) {
 		startTime := time.Now()
 		times = append(times, startTime)
 		//fmt.Printf("start time is %s", startTime)
-		//wg.Wait()
-		for index := 0; index < len(clients); index++ {
-			times[index] = <-ch
-			//times = append(times, <-ch)
-		}
-		for _, val := range results {
-			for _, time := range val.time {
-				times = append(times, time)
+		wg.Wait()
+		/*
+			for index := 0; index < len(clients); index++ {
+				times[index] = <-ch
+				//times = append(times, <-ch)
 			}
+		*/
+		for _, val := range results {
+			times = append(times, val.t)
 		}
 		thoroughputCalc(times, opts.Method)
 		time.Sleep(1000 * time.Millisecond)
@@ -409,14 +415,14 @@ func main() {
 
 	execOpts := execOptions{}
 	execOpts.Broker = "tcp://169.254.120.135:1883"
-	//execOpts.Broker = "tcp://localhost:1883"
-	execOpts.Broker = "tcp://192.168.56.101:1883"
-	execOpts.ClientNum = 8000
+	execOpts.Broker = "tcp://localhost:1883"
+	//execOpts.Broker = "tcp://192.168.56.101:1883"
+	execOpts.ClientNum = 1
 	execOpts.Qos = 0
-	execOpts.Count = 10
+	execOpts.Count = 1000
 	execOpts.Topic = "go-mqtt/"
 	execOpts.MaxInterval = 0
-	execOpts.MessageSize = 10000
+	execOpts.MessageSize = 1000
 
 	execOpts.Debug = false
 

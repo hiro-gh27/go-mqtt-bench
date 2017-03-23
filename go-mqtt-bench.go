@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -47,6 +48,7 @@ type execOptions struct {
 	UseDefaultHandler bool   // Subscriber個別ではなく、デフォルトのMessageHandlerを利用するかどうか
 	PreTime           int    // 実行前の待機時間(ms)
 	MaxInterval       int    // メッセージ毎の実行間隔時間(ms)
+	test              bool   //テスト
 }
 
 type clientResult struct {
@@ -62,6 +64,15 @@ type clientResult struct {
 func execute(exec func(clients []MQTT.Client, opts execOptions), opts execOptions) {
 	rand.Seed(time.Now().UnixNano())
 	//var clients []MQTT.Client
+	var testclinets []MQTT.Client
+	if opts.test {
+		for index := 0; index < opts.ClientNum; index++ {
+			client := connect(index, opts)
+			testclinets = append(testclinets, client)
+		}
+		singlePubSub(testclinets, opts)
+		return
+	}
 
 	clients, times := asynCconnectRequestAll(opts)
 	if clientsHasErr == true {
@@ -262,6 +273,7 @@ func connect(id int, execOpts execOptions) MQTT.Client {
 		fmt.Printf("Connected error: %s\n", token.Error())
 		return nil
 	}
+	time.Sleep(100 * time.Millisecond)
 	return client
 }
 
@@ -310,13 +322,16 @@ func singlePubSub(clients []MQTT.Client, opts execOptions) {
 	var results []*clientResult
 	publisher := clients[len(clients)-1]
 	clients = clients[:len(clients)-1]
+	index := 0
 	for _, client := range clients {
 		result := &clientResult{}
 		results = append(results, result)
+		result.id = index
 		/**
 		 * call back function when message arrive
 		 */
 		var handller MQTT.MessageHandler = func(client MQTT.Client, msg MQTT.Message) {
+			fmt.Printf("clientID= %d, topic= %s\n", result.id, msg.Topic())
 			if opts.Debug {
 				fmt.Printf("TOPIC: %s\n", msg.Topic())
 				fmt.Printf("MSG: %s\n", msg.Payload())
@@ -328,13 +343,15 @@ func singlePubSub(clients []MQTT.Client, opts execOptions) {
 		if token.Wait() && token.Error() != nil {
 			fmt.Printf("Subscribe error: %s\n", token.Error())
 		}
+		time.Sleep(300 * time.Millisecond)
+		index++
 	}
 
 	// * do 1publish and wait to arrive message.
 	for index := 0; index < opts.Count; index++ {
 		wg.Add(len(clients))
 		var times []time.Time
-		pubTopic := fmt.Sprintf(opts.Topic+"trial%d", index)
+		pubTopic := fmt.Sprintf(opts.Topic+"trial-%d", index)
 		massage := randomMessage(opts.MessageSize)
 		token := publisher.Publish(pubTopic, opts.Qos, false, massage)
 		token.Wait()
@@ -395,19 +412,20 @@ func main() {
 		cpus := runtime.NumCPU()
 		runtime.GOMAXPROCS(cpus)
 	*/
-
+	runtime.GOMAXPROCS(1)
 	execOpts := execOptions{}
 	execOpts.Broker = "tcp://169.254.120.135:1883"
-	execOpts.Broker = "tcp://localhost:1883"
-	execOpts.Broker = "tcp://192.168.56.101:1883"
-	execOpts.ClientNum = 300
+	//execOpts.Broker = "tcp://localhost:1883"
+	//execOpts.Broker = "tcp://192.168.56.101:1883"
+	execOpts.ClientNum = 20
 	execOpts.Qos = 0
-	execOpts.Count = 10
+	execOpts.Count = 1
 	execOpts.Topic = "go-mqtt/"
 	execOpts.MaxInterval = 0
 	execOpts.MessageSize = 1000
 
 	execOpts.Debug = false
+	execOpts.test = true
 
 	execOpts.Method = "singlePubSub"
 	switch execOpts.Method {
@@ -436,5 +454,5 @@ func main() {
 - 基本appendをあやしむ
 
 - subscribeタイムアウトを設定しないと, どっかでロストする確率高すぎて.
-
+> タイムアウト処理のプログラム作成コストが高すぎると判断
 */

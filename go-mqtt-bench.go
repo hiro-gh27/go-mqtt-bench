@@ -51,8 +51,8 @@ type execOptions struct {
 
 type clientResult struct {
 	count int
-	time  []time.Time
-	t     time.Time
+	times []time.Time
+	time  time.Time
 	id    int
 }
 
@@ -175,7 +175,7 @@ func asyncPublishAll(clients []MQTT.Client, opts execOptions) {
 				}
 				token := client.Publish(topic, opts.Qos, false, massage)
 				token.Wait()
-				result.time = append(result.time, time.Now())
+				result.times = append(result.times, time.Now())
 				if opts.Debug {
 					fmt.Printf("Publish : id=%d, count=%d, topic=%s, massagesize=%v, \n", clientID, index, topic, len(massage))
 				}
@@ -190,7 +190,7 @@ func asyncPublishAll(clients []MQTT.Client, opts execOptions) {
 	var times []time.Time
 	times = append(times, startTime)
 	for _, val := range results {
-		for _, time := range val.time {
+		for _, time := range val.times {
 			times = append(times, time)
 		}
 	}
@@ -253,7 +253,6 @@ func asyncSubscribeAll(clients []MQTT.Client, opts execOptions) {
 func connect(id int, execOpts execOptions) MQTT.Client {
 	prosessID := strconv.FormatInt(int64(os.Getpid()), 16)
 	clientID := fmt.Sprintf("go-mqtt-bench%s-%d", prosessID, id)
-
 	opts := MQTT.NewClientOptions()
 	opts.AddBroker(execOpts.Broker)
 	opts.SetClientID(clientID)
@@ -311,59 +310,43 @@ func singlePubSub(clients []MQTT.Client, opts execOptions) {
 	var results []*clientResult
 	publisher := clients[len(clients)-1]
 	clients = clients[:len(clients)-1]
-	//ch := make(chan time.Time)
-	index := 0
 	for _, client := range clients {
 		result := &clientResult{}
 		results = append(results, result)
-		result.id = index
 		/**
 		 * call back function when message arrive
 		 */
 		var handller MQTT.MessageHandler = func(client MQTT.Client, msg MQTT.Message) {
-			//var id int
-			//id = index
-			//arriveTime := time.Now()
-			//ch <- arriveTime
-			//result.time = append(result.time, time.Now())
-			//fmt.Printf("TOPIC: %s\n", msg.Topic())
-			//fmt.Printf("%d", id)
-			//fmt.Printf("MSG: %s\n", msg.Payload())
-			//fmt.Printf("id=%d, message=%s\n", result.id, msg.Payload())
-			result.t = time.Now()
+			if opts.Debug {
+				fmt.Printf("TOPIC: %s\n", msg.Topic())
+				fmt.Printf("MSG: %s\n", msg.Payload())
+			}
+			result.time = time.Now()
 			wg.Done()
 		}
 		token := client.Subscribe(topic, opts.Qos, handller)
 		if token.Wait() && token.Error() != nil {
 			fmt.Printf("Subscribe error: %s\n", token.Error())
 		}
-		index++
 	}
 
-	pubTopic := fmt.Sprintf(opts.Topic + "hog")
-
+	// * do 1publish and wait to arrive message.
 	for index := 0; index < opts.Count; index++ {
 		wg.Add(len(clients))
-		//var times = make([]time.Time, len(clients))
 		var times []time.Time
+		pubTopic := fmt.Sprintf(opts.Topic+"trial%d", index)
 		massage := randomMessage(opts.MessageSize)
 		token := publisher.Publish(pubTopic, opts.Qos, false, massage)
 		token.Wait()
 		if token.Wait() && token.Error() != nil {
 			fmt.Printf("Publish error: %s\n", token.Error())
+		} else {
+			startTime := time.Now()
+			times = append(times, startTime)
 		}
-		startTime := time.Now()
-		times = append(times, startTime)
-		//fmt.Printf("start time is %s", startTime)
 		wg.Wait()
-		/*
-			for index := 0; index < len(clients); index++ {
-				times[index] = <-ch
-				//times = append(times, <-ch)
-			}
-		*/
 		for _, val := range results {
-			times = append(times, val.t)
+			times = append(times, val.time)
 		}
 		thoroughputCalc(times, opts.Method)
 		time.Sleep(1000 * time.Millisecond)
@@ -416,10 +399,10 @@ func main() {
 	execOpts := execOptions{}
 	execOpts.Broker = "tcp://169.254.120.135:1883"
 	execOpts.Broker = "tcp://localhost:1883"
-	//execOpts.Broker = "tcp://192.168.56.101:1883"
-	execOpts.ClientNum = 1
+	execOpts.Broker = "tcp://192.168.56.101:1883"
+	execOpts.ClientNum = 300
 	execOpts.Qos = 0
-	execOpts.Count = 1000
+	execOpts.Count = 10
 	execOpts.Topic = "go-mqtt/"
 	execOpts.MaxInterval = 0
 	execOpts.MessageSize = 1000
@@ -445,11 +428,13 @@ func main() {
 
 - subscribeの時間がちゃんと取れているのか
 
+- connectスループットの計算が少しおかしいかもね
+
 - コマンドラインで受付けるように変更
 > serverOSでプログラム修正が容易ではないため, コマンドラインでの入力が望ましいとわかった.
 
 - 基本appendをあやしむ
 
-- ま, VMも今日で見えてきたし, 気長に頑張ろう...
+- subscribeタイムアウトを設定しないと, どっかでロストする確率高すぎて.
 
 */

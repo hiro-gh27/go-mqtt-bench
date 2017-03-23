@@ -213,18 +213,16 @@ func asyncPublishAll(clients []MQTT.Client, opts execOptions) {
  */
 func singlePubSub(clients []MQTT.Client, opts execOptions) {
 	wg := new(sync.WaitGroup)
-	//topic := fmt.Sprintf(opts.Topic + "#")
 	publisher := clients[len(clients)-1]
 	clients = clients[:len(clients)-1]
-	index := 0
 	var results []*clientResult
-	for _, client := range clients {
+	for index := 0; index < len(clients); index++ {
+		client := clients[index]
 		result := &clientResult{}
 		results = append(results, result)
 		result.id = index
 		singleSubscribe(wg, result, opts, client)
 		time.Sleep(300 * time.Millisecond)
-		index++
 	}
 
 	// * do 1publish and wait to arrive message.
@@ -232,9 +230,7 @@ func singlePubSub(clients []MQTT.Client, opts execOptions) {
 		wg.Add(len(clients))
 		var times []time.Time
 		startTime := singlePublish(opts, publisher, index)
-
 		wg.Wait()
-
 		times = append(times, startTime)
 		for _, val := range results {
 			times = append(times, val.time)

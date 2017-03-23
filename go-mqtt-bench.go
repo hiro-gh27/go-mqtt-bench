@@ -209,53 +209,79 @@ func asyncPublishAll(clients []MQTT.Client, opts execOptions) {
 }
 
 /**
- * 非同期でsubscribeを行う.
+ * 応答時間を求める.
+ */
+func singlePubSub(clients []MQTT.Client, opts execOptions) {
+	wg := new(sync.WaitGroup)
+	//topic := fmt.Sprintf(opts.Topic + "#")
+	publisher := clients[len(clients)-1]
+	clients = clients[:len(clients)-1]
+	index := 0
+	var results []*clientResult
+	for _, client := range clients {
+		result := &clientResult{}
+		results = append(results, result)
+		result.id = index
+		singleSubscribe(wg, result, opts, client)
+		time.Sleep(300 * time.Millisecond)
+		index++
+	}
+
+	// * do 1publish and wait to arrive message.
+	for index := 0; index < opts.Count; index++ {
+		wg.Add(len(clients))
+		var times []time.Time
+		startTime := singlePublish(opts, publisher, index)
+
+		wg.Wait()
+
+		times = append(times, startTime)
+		for _, val := range results {
+			times = append(times, val.time)
+		}
+		thoroughputCalc(times, opts.Method)
+		time.Sleep(1000 * time.Millisecond)
+	}
+}
+
+/*
+ * 1subscribeを実行する. 引数が多いのがイマイチ...
+ */
+func singleSubscribe(wg *sync.WaitGroup, result *clientResult, opts execOptions, client MQTT.Client) {
+	opts.Debug = true
+	topic := fmt.Sprintf(opts.Topic + "#")
+	var handller MQTT.MessageHandler = func(client MQTT.Client, msg MQTT.Message) {
+		if opts.Debug {
+			fmt.Printf("clientID= %d, topic= %s\n", result.id, msg.Topic())
+		}
+		result.time = time.Now()
+		wg.Done()
+	}
+	token := client.Subscribe(topic, opts.Qos, handller)
+	if token.Wait() && token.Error() != nil {
+		fmt.Printf("Subscribe error: %s\n", token.Error())
+	}
+}
+
+/*
+ * 1回だけpublishを行う. indexは何度目の試行なのかを示している.
+ */
+func singlePublish(opts execOptions, publisher MQTT.Client, index int) time.Time {
+	pubTopic := fmt.Sprintf(opts.Topic+"trial-%d", index)
+	massage := randomMessage(opts.MessageSize)
+	token := publisher.Publish(pubTopic, opts.Qos, false, massage)
+	token.Wait()
+	finTime := time.Now()
+	if token.Wait() && token.Error() != nil {
+		fmt.Printf("Publish error: %s\n", token.Error())
+	}
+	return finTime
+}
+
+/**
+ * 非同期でsubscribeを行う. brokerの配送スループットが計測できる.
  */
 func asyncSubscribeAll(clients []MQTT.Client, opts execOptions) {
-	wg := new(sync.WaitGroup)
-	topic := fmt.Sprintf(opts.Topic + "#")
-	var results []*clientResult
-
-	for id := 0; id < len(clients); id++ {
-		wg.Add(1)
-		client := clients[id]
-		result := &clientResult{}
-		ch := make(chan bool)
-
-		/**
-		 * callBack function
-		 */
-		var handller MQTT.MessageHandler = func(client MQTT.Client, mag MQTT.Message) {
-			result.count = result.count + 1
-			ch <- true
-			fmt.Print("now count is: ")
-			fmt.Println(result.count)
-		}
-
-		token := client.Subscribe(topic, opts.Qos, handller)
-		if token.Wait() && token.Error() != nil {
-			fmt.Printf("Subscribe error: %s\n", token.Error())
-		}
-		results = append(results, result)
-		/**
-		 * go function
-		 */
-		go func() {
-			for index := 0; index < opts.Count; index++ {
-				<-ch
-			}
-			close(ch)
-			wg.Done()
-		}()
-	}
-	wg.Wait()
-
-	//sub all counts.
-	var totalCount int
-	for _, val := range results {
-		totalCount = totalCount + val.count
-	}
-
 }
 
 /**
@@ -314,63 +340,6 @@ func randomMessage(n int) string {
 }
 
 /**
- * 応答時間を求める.
- */
-func singlePubSub(clients []MQTT.Client, opts execOptions) {
-	wg := new(sync.WaitGroup)
-	topic := fmt.Sprintf(opts.Topic + "#")
-	var results []*clientResult
-	publisher := clients[len(clients)-1]
-	clients = clients[:len(clients)-1]
-	index := 0
-	for _, client := range clients {
-		result := &clientResult{}
-		results = append(results, result)
-		result.id = index
-		/**
-		 * call back function when message arrive
-		 */
-		var handller MQTT.MessageHandler = func(client MQTT.Client, msg MQTT.Message) {
-			fmt.Printf("clientID= %d, topic= %s\n", result.id, msg.Topic())
-			if opts.Debug {
-				fmt.Printf("TOPIC: %s\n", msg.Topic())
-				fmt.Printf("MSG: %s\n", msg.Payload())
-			}
-			result.time = time.Now()
-			wg.Done()
-		}
-		token := client.Subscribe(topic, opts.Qos, handller)
-		if token.Wait() && token.Error() != nil {
-			fmt.Printf("Subscribe error: %s\n", token.Error())
-		}
-		time.Sleep(300 * time.Millisecond)
-		index++
-	}
-
-	// * do 1publish and wait to arrive message.
-	for index := 0; index < opts.Count; index++ {
-		wg.Add(len(clients))
-		var times []time.Time
-		pubTopic := fmt.Sprintf(opts.Topic+"trial-%d", index)
-		massage := randomMessage(opts.MessageSize)
-		token := publisher.Publish(pubTopic, opts.Qos, false, massage)
-		token.Wait()
-		if token.Wait() && token.Error() != nil {
-			fmt.Printf("Publish error: %s\n", token.Error())
-		} else {
-			startTime := time.Now()
-			times = append(times, startTime)
-		}
-		wg.Wait()
-		for _, val := range results {
-			times = append(times, val.time)
-		}
-		thoroughputCalc(times, opts.Method)
-		time.Sleep(1000 * time.Millisecond)
-	}
-}
-
-/**
  * タイムスライスからスループットを求める.
  */
 func connectThoroughput(times []time.Time) {
@@ -415,11 +384,11 @@ func main() {
 	runtime.GOMAXPROCS(1)
 	execOpts := execOptions{}
 	execOpts.Broker = "tcp://169.254.120.135:1883"
-	//execOpts.Broker = "tcp://localhost:1883"
+	execOpts.Broker = "tcp://localhost:1883"
 	//execOpts.Broker = "tcp://192.168.56.101:1883"
 	execOpts.ClientNum = 20
 	execOpts.Qos = 0
-	execOpts.Count = 1
+	execOpts.Count = 3
 	execOpts.Topic = "go-mqtt/"
 	execOpts.MaxInterval = 0
 	execOpts.MessageSize = 1000
@@ -442,7 +411,7 @@ func main() {
 }
 
 /* TODO
-- suruct t int がスマートじゃないので変更
+-
 
 - subscribeの時間がちゃんと取れているのか
 

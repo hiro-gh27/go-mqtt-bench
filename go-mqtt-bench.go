@@ -1,21 +1,23 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"math/rand"
 	"os"
 	"runtime"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
-
-	"sort"
 
 	MQTT "github.com/eclipse/paho.mqtt.golang"
 )
 
 var randSrc = rand.NewSource(time.Now().UnixNano())
 var clientsHasErr = false
+
+const baseTopic string = "go-mqtt-bench/"
 
 //use randomMessage
 const (
@@ -32,25 +34,25 @@ const (
 	rs6LetterIdxMax  = 63 / rs6LetterIdxBits
 )
 
-//使っていない項目多数あり...
+// 実行パラメータ関係
 type execOptions struct {
-	Broker            string // Broker URI
-	Qos               byte   // QoS(0|1|2)
-	Retain            bool   // Retain
-	Debug             bool   //デバック
-	Topic             string // Topicのルート
-	Username          string // ユーザID
-	Password          string // パスワード
-	Method            string // 実行メソッド
-	ClientNum         int    // クライアントの同時実行数
-	Count             int    // 1クライアント当たりのメッセージ数
-	MessageSize       int    // 1メッセージのサイズ(byte)
-	UseDefaultHandler bool   // Subscriber個別ではなく、デフォルトのMessageHandlerを利用するかどうか
-	PreTime           int    // 実行前の待機時間(ms)
-	MaxInterval       int    // メッセージ毎の実行間隔時間(ms)
-	test              bool   //テスト
+	Broker      string // Broker URI
+	Qos         byte   // QoS(0|1|2)
+	Retain      bool   // Retain
+	Debug       bool   //デバック
+	Topic       string // Topicのルート
+	Method      string // 実行メソッド
+	ClientNum   int    // クライアントの同時実行数
+	Count       int    // 1クライアント当たりのメッセージ数
+	MessageSize int    // 1メッセージのサイズ(byte)
+	sleepTime   int    // 実行前の待機時間(ms)
+	MaxInterval int    // メッセージ毎の実行間隔時間(ms)
+	test        bool   //テスト
+	trialNum    int    //試行回数
+	synBacklog  int    //net.ipv4.tcp_max_syn_backlog =
 }
 
+// 実行結果の格納関係
 type clientResult struct {
 	count int
 	times []time.Time
@@ -64,13 +66,12 @@ type clientResult struct {
 func execute(exec func(clients []MQTT.Client, opts execOptions), opts execOptions) {
 	rand.Seed(time.Now().UnixNano())
 	//var clients []MQTT.Client
-	var testclinets []MQTT.Client
 	if opts.test {
+		var testclinets []MQTT.Client
 		for index := 0; index < opts.ClientNum; index++ {
 			client := connect(index, opts)
 			testclinets = append(testclinets, client)
 		}
-		singlePubSub(testclinets, opts)
 		return
 	}
 
@@ -85,7 +86,7 @@ func execute(exec func(clients []MQTT.Client, opts execOptions), opts execOption
 		}
 		return
 	}
-
+	// 結局こっちいらんのちゃうん!!??
 	if len(clients) < opts.ClientNum {
 		fmt.Println("========= Error!! Disconnect and Exit ==========")
 		fmt.Printf("clients: %d, opts.ClienNum: %d\n", len(clients), opts.ClientNum)
@@ -94,11 +95,8 @@ func execute(exec func(clients []MQTT.Client, opts execOptions), opts execOption
 	}
 	thoroughputCalc(times, "コネクション")
 
-	//wait a little to stability. 3000 ms is suitable :-)
-	time.Sleep(3000 * time.Millisecond)
-
+	time.Sleep(time.Duration(opts.sleepTime) * time.Millisecond)
 	exec(clients, opts)
-
 	asyncDisconnect(clients)
 }
 
@@ -110,7 +108,7 @@ func asynCconnectRequestAll(execOpts execOptions) ([]MQTT.Client, []time.Time) {
 	wg := &sync.WaitGroup{}
 	clients := make([]MQTT.Client, execOpts.ClientNum)
 	times := make([]time.Time, execOpts.ClientNum)
-	socketToken := make(chan struct{}, 100) //並列で処理を進めたいのだが, ソケット数に規制が存在するため...
+	socketToken := make(chan struct{}, execOpts.synBacklog) //default is 128, it's linux default..
 	startTime := time.Now()
 	for index := 0; index < execOpts.ClientNum; index++ {
 		wg.Add(1)
@@ -164,54 +162,56 @@ func asyncDisconnect(clients []MQTT.Client) {
  */
 func asyncPublishAll(clients []MQTT.Client, opts execOptions) {
 	wg := &sync.WaitGroup{}
-	startTime := time.Now()
-	var results []*clientResult
-
-	for id := 0; id < len(clients); id++ {
-		wg.Add(1)
-		c := clients[id]
-		result := &clientResult{}
-		results = append(results, result)
-		/**
-		 * go func that do async Publish
-		 */
-		go func(clientID int) {
-			client := c
-			for index := 0; index < opts.Count; index++ {
-				massage := randomMessage(opts.MessageSize)
-				topic := fmt.Sprintf(opts.Topic+"%d", clientID)
-				if opts.MaxInterval > 0 {
-					interval := rand.Intn(opts.MaxInterval)
-					time.Sleep(time.Duration(interval) * time.Millisecond)
+	for index := 0; index < opts.trialNum; index++ {
+		startTime := time.Now()
+		var results []*clientResult
+		for id := 0; id < len(clients); id++ {
+			wg.Add(1)
+			c := clients[id]
+			result := &clientResult{}
+			results = append(results, result)
+			/**
+			 * go func that do async Publish
+			 */
+			go func(clientID int) {
+				client := c
+				for index := 0; index < opts.Count; index++ {
+					massage := randomMessage(opts.MessageSize)
+					topic := fmt.Sprintf(opts.Topic+"%d", clientID)
+					if opts.MaxInterval > 0 {
+						interval := rand.Intn(opts.MaxInterval)
+						time.Sleep(time.Duration(interval) * time.Millisecond)
+					}
+					token := client.Publish(topic, opts.Qos, false, massage)
+					token.Wait()
+					result.times = append(result.times, time.Now())
+					if opts.Debug {
+						fmt.Printf("Publish : id=%d, count=%d, topic=%s, massagesize=%v, \n", clientID, index, topic, len(massage))
+					}
 				}
-				token := client.Publish(topic, opts.Qos, false, massage)
-				token.Wait()
-				result.times = append(result.times, time.Now())
-				if opts.Debug {
-					fmt.Printf("Publish : id=%d, count=%d, topic=%s, massagesize=%v, \n", clientID, index, topic, len(massage))
-				}
-			}
-			wg.Done()
-		}(id)
+				wg.Done()
+			}(id)
 
-	}
-	wg.Wait()
-
-	//スループットの手続き
-	var times []time.Time
-	times = append(times, startTime)
-	for _, val := range results {
-		for _, time := range val.times {
-			times = append(times, time)
 		}
+		wg.Wait()
+
+		//スループットの手続き
+		var times []time.Time
+		times = append(times, startTime)
+		for _, val := range results {
+			for _, time := range val.times {
+				times = append(times, time)
+			}
+		}
+		thoroughputCalc(times, opts.Method)
+		time.Sleep(500 * time.Millisecond)
 	}
-	thoroughputCalc(times, opts.Method)
 }
 
 /**
- * 応答時間を求める.
+ * 非同期でsubscribeを行う. brokerの配送スループットが計測できる.
  */
-func singlePubSub(clients []MQTT.Client, opts execOptions) {
+func asyncSubscribeAll(clients []MQTT.Client, opts execOptions) {
 	wg := new(sync.WaitGroup)
 	publisher := clients[len(clients)-1]
 	clients = clients[:len(clients)-1]
@@ -224,9 +224,8 @@ func singlePubSub(clients []MQTT.Client, opts execOptions) {
 		singleSubscribe(wg, result, opts, client)
 		time.Sleep(300 * time.Millisecond)
 	}
-
 	// * do 1publish and wait to arrive message.
-	for index := 0; index < opts.Count; index++ {
+	for index := 0; index < opts.trialNum; index++ {
 		wg.Add(len(clients))
 		var times []time.Time
 		startTime := singlePublish(opts, publisher, index)
@@ -241,7 +240,7 @@ func singlePubSub(clients []MQTT.Client, opts execOptions) {
 }
 
 /*
- * 1subscribeを実行する. 引数が多いのがイマイチ...
+ * 1subscribeを実行する. 引数が多いのがイマイチ... ロジックも複雑すぎるか!?
  */
 func singleSubscribe(wg *sync.WaitGroup, result *clientResult, opts execOptions, client MQTT.Client) {
 	opts.Debug = true
@@ -272,12 +271,6 @@ func singlePublish(opts execOptions, publisher MQTT.Client, index int) time.Time
 		fmt.Printf("Publish error: %s\n", token.Error())
 	}
 	return finTime
-}
-
-/**
- * 非同期でsubscribeを行う. brokerの配送スループットが計測できる.
- */
-func asyncSubscribeAll(clients []MQTT.Client, opts execOptions) {
 }
 
 /**
@@ -357,7 +350,6 @@ func thoroughputCalc(times []time.Time, method string) {
 	totalCount := len(times) - 1
 	var intTimes []int
 	for _, t := range times {
-		//fmt.Println(t)
 		intTime := t.Minute()*60*1000000000 + t.Second()*1000000000 + t.Nanosecond()
 		intTimes = append(intTimes, intTime)
 	}
@@ -372,36 +364,82 @@ func thoroughputCalc(times []time.Time, method string) {
 
 //コマンドラインから指定できると, もっとエレガントなプログラムになるのだが...
 func main() {
-	/*
-		use max cpu
-		cpus := runtime.NumCPU()
-		runtime.GOMAXPROCS(cpus)
-	*/
-	runtime.GOMAXPROCS(1)
+	//use max cpu
+	cpus := runtime.NumCPU()
+	runtime.GOMAXPROCS(cpus)
+
+	broker := flag.String("broker", "tcp://{host}:{port}", "URI of MQTT broker (required)")
+	action := flag.String("action", "p|pub or s|sub", "Publish or Subscribe or Subscribe(with publishing) (required)")
+	qos := flag.Int("qos", 0, "MQTT QoS(0|1|2)")
+	retain := flag.Bool("retain", false, "MQTT Retain")
+	topic := flag.String("topic", baseTopic, "Base topic")
+	clients := flag.Int("clients", 10, "Number of clients")
+	count := flag.Int("count", 100, "Number of loops per client")
+	size := flag.Int("size", 1024, "Message size per publish (byte)")
+	sleepTime := flag.Int("sleep", 3000, "sleep wait time (ms)")
+	intervalTime := flag.Int("intervaltime", 0, "Interval time per message (ms)")
+	trial := flag.Int("trial", 10, "trial is number of how many loops are")
+	synBacklog := flag.Int("syn", 128, "net.ipv4.tcp_max_syn_backlog = ")
+	debug := flag.Bool("x", false, "Debug mode")
+
+	// if no args ... exit programs !!
+	flag.Parse()
+	if len(os.Args) < 1 {
+		fmt.Println("call here")
+		flag.Usage()
+		return
+	}
+
+	// use default broker
+	if broker == nil || *broker == "" || *broker == "tcp://{host}:{port}" {
+		fmt.Println("Use Default Broker localhost:1883")
+		/* メモ
+		execOpts.Broker = "tcp://169.254.120.135:1883" // second Mac
+		execOpts.Broker = "tcp://192.168.56.101:1883"  // VM: ubuntu desktop
+		execOpts.Broker = "tcp://192.168.56.102:1883"  // VM: ubuntu server
+		*/
+		*broker = "tcp://localhost:1883"
+	}
+
+	// mothod is important
+	method := ""
+	if *action == "p" || *action == "pub" {
+		method = "pub"
+	} else if *action == "s" || *action == "sub" {
+		method = "sub"
+	} else if *action == "ps" || *action == "pubsub" {
+		method = "singlePubSub"
+	}
+	if method == "" {
+		fmt.Printf("Invalid argument : -action -> %s\n", *action)
+		return
+	}
+
 	execOpts := execOptions{}
-	execOpts.Broker = "tcp://169.254.120.135:1883"
-	execOpts.Broker = "tcp://localhost:1883"
-	//execOpts.Broker = "tcp://192.168.56.101:1883"
-	execOpts.ClientNum = 20
-	execOpts.Qos = 0
-	execOpts.Count = 3
-	execOpts.Topic = "go-mqtt/"
-	execOpts.MaxInterval = 0
-	execOpts.MessageSize = 1000
+	execOpts.Broker = *broker
+	execOpts.Qos = byte(*qos)
+	execOpts.Retain = *retain
+	execOpts.Topic = *topic
+	execOpts.MessageSize = *size
+	execOpts.ClientNum = *clients
+	execOpts.Count = *count
+	execOpts.MaxInterval = *intervalTime
+	execOpts.sleepTime = *sleepTime
+	execOpts.trialNum = *trial
+	execOpts.synBacklog = *synBacklog
 
-	execOpts.Debug = false
-	execOpts.test = true
+	execOpts.test = false
+	execOpts.Debug = *debug
 
-	execOpts.Method = "singlePubSub"
-	switch execOpts.Method {
+	switch method {
 	case "pub":
 		execute(asyncPublishAll, execOpts)
 	case "sub":
 		execOpts.ClientNum = execOpts.ClientNum + 1 // 1client will be publisher.
 		execute(asyncSubscribeAll, execOpts)
 	case "singlePubSub":
-		execOpts.ClientNum = execOpts.ClientNum + 1 // 1client will be publisher.
-		execute(singlePubSub, execOpts)
+		execOpts.ClientNum = 2
+		execute(asyncSubscribeAll, execOpts)
 	}
 
 }
@@ -420,4 +458,36 @@ func main() {
 
 - subscribeタイムアウトを設定しないと, どっかでロストする確率高すぎて.
 > タイムアウト処理のプログラム作成コストが高すぎると判断
+
+ * 応答時間を求める.
+func singlePubSub(clients []MQTT.Client, opts execOptions) {
+	wg := new(sync.WaitGroup)
+	publisher := clients[len(clients)-1]
+	clients = clients[:len(clients)-1]
+	var results []*clientResult
+	for index := 0; index < len(clients); index++ {
+		client := clients[index]
+		result := &clientResult{}
+		results = append(results, result)
+		result.id = index
+		singleSubscribe(wg, result, opts, client)
+		time.Sleep(300 * time.Millisecond)
+	}
+
+	// * do 1publish and wait to arrive message.
+	for index := 0; index < opts.trialNum; index++ {
+		wg.Add(len(clients))
+		var times []time.Time
+		startTime := singlePublish(opts, publisher, index)
+		wg.Wait()
+		times = append(times, startTime)
+		for _, val := range results {
+			times = append(times, val.time)
+		}
+		thoroughputCalc(times, opts.Method)
+		time.Sleep(1000 * time.Millisecond)
+	}
+}
+
+
 */

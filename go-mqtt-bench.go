@@ -3,9 +3,11 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
 	"math/rand"
 	"os"
 	"runtime"
+	"runtime/pprof"
 	"sort"
 	"strconv"
 	"sync"
@@ -24,6 +26,7 @@ const (
 	letters       = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	letterIdxBits = 6
 	letterIdxMask = 1<<letterIdxBits - 1
+	letterIdxMax  = 63 / letterIdxBits
 )
 
 //use randomStr
@@ -161,6 +164,13 @@ func asyncDisconnect(clients []MQTT.Client) {
  * 非同期でPublishをそれぞれのクライアントが行う.
  */
 func asyncPublishAll(clients []MQTT.Client, opts execOptions) {
+	cpulog := "cpu.log"
+	f, err := os.Create(cpulog)
+	if err != nil {
+		log.Fatal(err)
+	}
+	pprof.StartCPUProfile(f)
+	defer pprof.StopCPUProfile()
 	wg := &sync.WaitGroup{}
 	for index := 0; index < opts.trialNum; index++ {
 		startTime := time.Now()
@@ -293,24 +303,25 @@ func connect(id int, execOpts execOptions) MQTT.Client {
 }
 
 /**
- * 高速にnバイト文字列を生成する. 同時並行で使えないので利用停止.
+ * randomMessageより高速.
+ * TODO: 置き換え作業
  */
-func randomStr(n int) string {
-	b := make([]byte, n)
-	cache, remain := randSrc.Int63(), rs6LetterIdxMax
-	for i := n - 1; i >= 0; {
+func randomStr2(strLength int) string {
+	message := make([]byte, strLength)
+	cache, remain := rand.Int63(), rs6LetterIdxMax
+	for i := strLength - 1; i >= 0; {
 		if remain == 0 {
-			cache, remain = randSrc.Int63(), rs6LetterIdxMax
+			cache, remain = rand.Int63(), rs6LetterIdxMax
 		}
 		idx := int(cache & rs6LetterIdxMask)
 		if idx < len(rs6Letters) {
-			b[i] = rs6Letters[idx]
+			message[i] = rs6Letters[idx]
 			i--
 		}
 		cache >>= rs6LetterIdxBits
 		remain--
 	}
-	return string(b)
+	return string(message)
 }
 
 /**
@@ -364,6 +375,7 @@ func thoroughputCalc(times []time.Time, method string) {
 
 //コマンドラインから指定できると, もっとエレガントなプログラムになるのだが...
 func main() {
+
 	//use max cpu
 	cpus := runtime.NumCPU()
 	runtime.GOMAXPROCS(cpus)
@@ -378,7 +390,7 @@ func main() {
 	size := flag.Int("size", 1024, "Message size per publish (byte)")
 	sleepTime := flag.Int("sleep", 3000, "sleep wait time (ms)")
 	intervalTime := flag.Int("intervaltime", 0, "Interval time per message (ms)")
-	trial := flag.Int("trial", 10, "trial is number of how many loops are")
+	trial := flag.Int("trial", 1, "trial is number of how many loops are")
 	synBacklog := flag.Int("syn", 128, "net.ipv4.tcp_max_syn_backlog = ")
 	debug := flag.Bool("x", false, "Debug mode")
 

@@ -3,11 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"math/rand"
 	"os"
 	"runtime"
-	"runtime/pprof"
 	"sort"
 	"strconv"
 	"sync"
@@ -164,13 +162,6 @@ func asyncDisconnect(clients []MQTT.Client) {
  * 非同期でPublishをそれぞれのクライアントが行う.
  */
 func asyncPublishAll(clients []MQTT.Client, opts execOptions) {
-	cpulog := "cpu.log"
-	f, err := os.Create(cpulog)
-	if err != nil {
-		log.Fatal(err)
-	}
-	pprof.StartCPUProfile(f)
-	defer pprof.StopCPUProfile()
 	wg := &sync.WaitGroup{}
 	for index := 0; index < opts.trialNum; index++ {
 		startTime := time.Now()
@@ -298,7 +289,6 @@ func connect(id int, execOpts execOptions) MQTT.Client {
 		fmt.Printf("Connected error: %s\n", token.Error())
 		return nil
 	}
-	time.Sleep(100 * time.Millisecond)
 	return client
 }
 
@@ -325,7 +315,7 @@ func randomStr2(strLength int) string {
 }
 
 /**
- * nバイト文字列を生成する. 同時並行でも使える.
+ * nバイト文字列を生成する. 同時並行でも使える. 今後使用停止予定
  */
 func randomMessage(n int) string {
 	message := make([]byte, n)
@@ -371,6 +361,17 @@ func thoroughputCalc(times []time.Time, method string) {
 	throughput := float64(totalCount) / float64(duration) * 1000 // messages/sec
 	fmt.Printf("%sスループット : totalCount=%d, duration=%dms, throughput=%.2fmessages/sec\n",
 		method, totalCount, duration, throughput)
+}
+
+/*
+ * 入力された時間まで待つ
+ */
+func waitExecTime() {
+	/*
+		入力された時間をどうにかして分解and整形.
+		そんで, その時間との差分をとってsleepでokかな〜
+	*/
+
 }
 
 //コマンドラインから指定できると, もっとエレガントなプログラムになるのだが...
